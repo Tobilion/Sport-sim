@@ -1,0 +1,2236 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Trophy, 
+  Tv, 
+  Calendar, 
+  UserCheck, 
+  TrendingUp, 
+  Users, 
+  Wallet, 
+  Briefcase, 
+  AlertCircle, 
+  Play, 
+  Sparkles, 
+  CheckCircle2, 
+  ArrowRight,
+  RefreshCw,
+  Award,
+  Trash2,
+  PlusCircle,
+  FileText,
+  User,
+  Activity,
+  Heart,
+  ChevronRight,
+  ShieldAlert,
+  Dumbbell,
+  Zap,
+  BarChart3,
+  Globe,
+  Landmark,
+  Shield,
+  Search,
+  BookOpen,
+  MapPin, // MapPin and other options for pristine layouts
+  Info
+} from 'lucide-react';
+
+import { 
+  Club, 
+  Player, 
+  Fixture, 
+  BracketNode, 
+  LiveMatchSimulation, 
+  TeamMentalityType 
+} from './types';
+
+import { seedAllClubs, randRange, generatePlayerAttributes } from './data/names';
+import { calculatePreMatchOdds, simulateTick as simulateMatchTick, runAssistantSubstitution, quickSimulateFixture } from './engine/matchEngine';
+
+import { MatchCenter } from './components/MatchCenter';
+import { LeagueTable } from './components/LeagueTable';
+import { CupBracket } from './components/CupBracket';
+import { ManagerSuite } from './components/ManagerSuite';
+import { NextMatch } from './components/NextMatch';
+import { AnalyticsCenter } from './components/AnalyticsCenter';
+import { AllTeams } from './components/AllTeams';
+
+interface SaveSlot {
+  id: string;
+  managerName: string;
+  clubId: string;
+  campaignType: 'league' | 'cup' | 'dual';
+  currentWeek: number;
+  userBalance: number;
+  allClubs: Club[];
+  leagueFixtures: Fixture[];
+  tournamentFixtures?: Fixture[];
+  cupBracket: BracketNode[];
+  currentCupRound: 'Group' | 'R16' | 'QF' | 'SF' | 'F' | 'FINISHED' | 'R32';
+  createdTime: number;
+  lastPlayed: number;
+}
+
+// Fixed constant for starting budget
+const START_BUDGET = 45000;
+
+// Dynamic round-robin Berger generator for 20 teams (19 rounds)
+function generateLeagueFixtures20(clubIds: string[]): Fixture[] {
+  const numTeams = clubIds.length;
+  const fixtures: Fixture[] = [];
+  const teams = [...clubIds];
+  let fixtureIdCounter = 1;
+
+  for (let round = 1; round < numTeams; round++) {
+    for (let i = 0; i < numTeams / 2; i++) {
+      const home = teams[i];
+      const away = teams[numTeams - 1 - i];
+      const isHome = round % 2 === 0;
+
+      fixtures.push({
+        id: `fix-${fixtureIdCounter++}`,
+        week: round,
+        homeClubId: isHome ? home : away,
+        awayClubId: isHome ? away : home,
+        isCompleted: false
+      });
+    }
+
+    // Rotate teams
+    const rest = teams.slice(1);
+    const last = rest.pop();
+    if (last !== undefined) {
+      teams.splice(1, teams.length - 1, last, ...rest);
+    }
+  }
+  return fixtures;
+}
+
+// 26-Week Dual Campaign Schedule (Premier League + Champions Cup concurrent alternating logic)
+export const DUAL_SCHEDULE = [
+  { week: 1, type: 'league', label: 'League Matchday 1' },
+  { week: 2, type: 'league', label: 'League Matchday 2' },
+  { week: 3, type: 'tournament', label: 'Prestige Champions Cup - Group Stage R1', stage: 'Group' },
+  { week: 4, type: 'league', label: 'League Matchday 3' },
+  { week: 5, type: 'league', label: 'League Matchday 4' },
+  { week: 6, type: 'tournament', label: 'Prestige Champions Cup - Group Stage R2', stage: 'Group' },
+  { week: 7, type: 'league', label: 'League Matchday 5' },
+  { week: 8, type: 'league', label: 'League Matchday 6' },
+  { week: 9, type: 'tournament', label: 'Prestige Champions Cup - Group Stage R3', stage: 'Group' },
+  { week: 10, type: 'league', label: 'League Matchday 7' },
+  { week: 11, type: 'league', label: 'League Matchday 8' },
+  { week: 12, type: 'tournament', label: 'Prestige Champions Cup - Round of 16', stage: 'R16' },
+  { week: 13, type: 'league', label: 'League Matchday 9' },
+  { week: 14, type: 'league', label: 'League Matchday 10' },
+  { week: 15, type: 'tournament', label: 'Prestige Champions Cup - Quarter-Finals', stage: 'QF' },
+  { week: 16, type: 'league', label: 'League Matchday 11' },
+  { week: 17, type: 'league', label: 'League Matchday 12' },
+  { week: 18, type: 'tournament', label: 'Prestige Champions Cup - Semi-Finals', stage: 'SF' },
+  { week: 19, type: 'league', label: 'League Matchday 13' },
+  { week: 20, type: 'league', label: 'League Matchday 14' },
+  { week: 21, type: 'tournament', label: 'Prestige Champions Cup - Champions Grand Final', stage: 'F' },
+  { week: 22, type: 'league', label: 'League Matchday 15' },
+  { week: 23, type: 'league', label: 'League Matchday 16' },
+  { week: 24, type: 'league', label: 'League Matchday 17' },
+  { week: 25, type: 'league', label: 'League Matchday 18' },
+  { week: 26, type: 'league', label: 'League Matchday 19' },
+];
+
+export function getTeamGroup(clubId: string, allClubs: Club[]): string {
+  const idx = allClubs.findIndex(c => c.id === clubId);
+  if (idx === -1 || idx >= 32) return 'None';
+  const groupChar = String.fromCharCode(65 + Math.floor(idx / 4)); // Groups A-H
+  return `Group ${groupChar}`;
+}
+
+export function generateTournamentGroupFixtures(allClubs: Club[]): Fixture[] {
+  const fixtures: Fixture[] = [];
+  let counter = 1;
+  for (let g = 0; g < 8; g++) {
+    const groupTeams = allClubs.slice(g * 4, g * 4 + 4);
+    if (groupTeams.length < 4) continue;
+    const [t0, t1, t2, t3] = groupTeams;
+
+    // Week 3
+    fixtures.push({ id: `cup-g1-${counter++}`, week: 3, homeClubId: t0.id, awayClubId: t1.id, isCompleted: false });
+    fixtures.push({ id: `cup-g1-${counter++}`, week: 3, homeClubId: t2.id, awayClubId: t3.id, isCompleted: false });
+
+    // Week 6
+    fixtures.push({ id: `cup-g2-${counter++}`, week: 6, homeClubId: t0.id, awayClubId: t2.id, isCompleted: false });
+    fixtures.push({ id: `cup-g2-${counter++}`, week: 6, homeClubId: t1.id, awayClubId: t3.id, isCompleted: false });
+
+    // Week 9
+    fixtures.push({ id: `cup-g3-${counter++}`, week: 9, homeClubId: t0.id, awayClubId: t3.id, isCompleted: false });
+    fixtures.push({ id: `cup-g3-${counter++}`, week: 9, homeClubId: t1.id, awayClubId: t2.id, isCompleted: false });
+  }
+  return fixtures;
+}
+
+export function generateCupBracket16FromGroups(qualifiers: string[]): BracketNode[] {
+  const list: BracketNode[] = [];
+  // R16 (8 matches)
+  for (let i = 1; i <= 8; i++) {
+    list.push({
+      id: `R16-${i}`,
+      round: 'R16',
+      roundIndex: i - 1,
+      homeClubId: qualifiers[2 * i - 2] || undefined,
+      awayClubId: qualifiers[2 * i - 1] || undefined,
+      isCompleted: false
+    });
+  }
+  // QF (4 matches)
+  for (let i = 1; i <= 4; i++) {
+    list.push({ id: `QF-${i}`, round: 'QF', roundIndex: i - 1, isCompleted: false });
+  }
+  // SF (2 matches)
+  for (let i = 1; i <= 2; i++) {
+    list.push({ id: `SF-${i}`, round: 'SF', roundIndex: i - 1, isCompleted: false });
+  }
+  // Final (1 match)
+  list.push({ id: `F-1`, round: 'F', roundIndex: 0, isCompleted: false });
+  return list;
+}
+
+export function getGroupStandingsForGroup(groupIndex: number, allClubs: Club[], tournamentFixtures: Fixture[]) {
+  const groupTeams = allClubs.slice(groupIndex * 4, groupIndex * 4 + 4);
+  const standings = groupTeams.map(club => {
+    let played = 0;
+    let won = 0;
+    let drawn = 0;
+    let lost = 0;
+    let goalsFor = 0;
+    let goalsAgainst = 0;
+    let points = 0;
+    
+    tournamentFixtures.forEach(f => {
+      if (!f.isCompleted) return;
+      if (f.homeClubId === club.id) {
+        played++;
+        goalsFor += f.homeScore || 0;
+        goalsAgainst += f.awayScore || 0;
+        if ((f.homeScore || 0) > (f.awayScore || 0)) {
+          won++; points += 3;
+        } else if ((f.homeScore || 0) < (f.awayScore || 0)) {
+          lost++;
+        } else {
+          drawn++; points += 1;
+        }
+      } else if (f.awayClubId === club.id) {
+        played++;
+        goalsFor += f.awayScore || 0;
+        goalsAgainst += f.homeScore || 0;
+        if ((f.awayScore || 0) > (f.homeScore || 0)) {
+          won++; points += 3;
+        } else if ((f.awayScore || 0) < (f.homeScore || 0)) {
+          lost++;
+        } else {
+          drawn++; points += 1;
+        }
+      }
+    });
+
+    return {
+      club,
+      played,
+      won,
+      drawn,
+      lost,
+      goalsFor,
+      goalsAgainst,
+      goalDifference: goalsFor - goalsAgainst,
+      points
+    };
+  });
+
+  return standings.sort((a, b) => {
+    if (b.points !== a.points) return b.points - a.points;
+    if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+    return b.goalsFor - a.goalsFor;
+  });
+}
+
+export default function App() {
+  // Synchronous loading helper on initial mount to prevent empty state render crash
+  const getInitialSlotData = (): SaveSlot | null => {
+    try {
+      const activeId = localStorage.getItem('sportsim_pro_active_slot_id_v3');
+      if (!activeId) return null;
+      const saved = localStorage.getItem('sportsim_pro_save_slots_v3');
+      if (!saved) return null;
+      const slots: SaveSlot[] = JSON.parse(saved);
+      return slots.find((s: SaveSlot) => s.id === activeId) || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const initialSlot = getInitialSlotData();
+
+  // Save slots list
+  const [saveSlots, setSaveSlots] = useState<SaveSlot[]>(() => {
+    try {
+      const saved = localStorage.getItem('sportsim_pro_save_slots_v3');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Active Save Slot ID
+  const [activeSlotId, setActiveSlotId] = useState<string | null>(() => {
+    const active = localStorage.getItem('sportsim_pro_active_slot_id_v3');
+    return active || null;
+  });
+
+  // Current session game state variables
+  const [managerName, setManagerName] = useState<string>(() => initialSlot?.managerName || 'Alex Ferguson');
+  const [userClubId, setUserClubId] = useState<string>(() => initialSlot?.clubId || 'club-1');
+  const [campaignType, setCampaignType] = useState<'league' | 'cup' | 'dual'>(() => 'dual'); // Force dual for pristine cross-league action
+  const [currentWeek, setCurrentWeek] = useState<number>(() => initialSlot?.currentWeek || 1);
+  const [userBalance, setUserBalance] = useState<number>(() => initialSlot?.userBalance ?? START_BUDGET);
+  const [allClubs, setAllClubs] = useState<Club[]>(() => initialSlot?.allClubs || []);
+  const [leagueFixtures, setLeagueFixtures] = useState<Fixture[]>(() => initialSlot?.leagueFixtures || []);
+  const [tournamentFixtures, setTournamentFixtures] = useState<Fixture[]>(() => initialSlot?.tournamentFixtures || []);
+  const [cupBracket, setCupBracket] = useState<BracketNode[]>(() => initialSlot?.cupBracket || []);
+  const [currentCupRound, setCurrentCupRound] = useState<'Group' | 'R16' | 'QF' | 'SF' | 'F' | 'FINISHED'>(() => (initialSlot?.currentCupRound || 'Group') as any);
+  const [currentTabProgress, setCurrentTabProgress] = useState<'MANAGER' | 'NEXT_MATCH' | 'FIXTURES' | 'STANDINGS' | 'ANALYTICS' | 'ALL_TEAMS'>('MANAGER');
+
+  // Dossier details modal anchors
+  const [activePlayerDossierId, setActivePlayerDossierId] = useState<string | null>(null);
+  const [activeClubDossierId, setActiveClubDossierId] = useState<string | null>(null);
+
+  // Player Dossier Tab selection
+  const [dossierTypeTab, setDossierTypeTab] = useState<'STATS' | 'QUALITIES'>('STATS');
+
+  // Interactive line-up substitutions midpoint check
+  const [isHalftimeModalOpen, setIsHalftimeModalOpen] = useState<boolean>(false);
+
+  // Season completion review screen
+  const [isSeasonReviewOpen, setIsSeasonReviewOpen] = useState<boolean>(false);
+
+  // Save creation states
+  const [newManagerName, setNewManagerName] = useState<string>('');
+  const [newSelectedClubId, setNewSelectedClubId] = useState<string>('club-1');
+  const [newCampaignType, setNewCampaignType] = useState<'league' | 'cup' | 'dual'>('dual');
+  const [isCreatingNewSlot, setIsCreatingNewSlot] = useState<boolean>(false);
+
+  // Simulation parameters
+  const [activeSimulation, setActiveSimulation] = useState<LiveMatchSimulation | null>(null);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [simSpeed, setSimSpeed] = useState<number>(1000); // ms per tick
+  const [simMessage, setSimMessage] = useState<string>('');
+
+  const simRef = useRef<any>(null);
+
+  // Sync slots to localstorage
+  useEffect(() => {
+    localStorage.setItem('sportsim_pro_save_slots_v3', JSON.stringify(saveSlots));
+  }, [saveSlots]);
+
+  // Sync active slot ID to localstorage
+  useEffect(() => {
+    if (activeSlotId) {
+      localStorage.setItem('sportsim_pro_active_slot_id_v3', activeSlotId);
+    } else {
+      localStorage.removeItem('sportsim_pro_active_slot_id_v3');
+    }
+  }, [activeSlotId]);
+
+  // Automatically load the active slot when selected
+  useEffect(() => {
+    if (activeSlotId) {
+      const slot = saveSlots.find(s => s.id === activeSlotId);
+      if (slot) {
+        setManagerName(slot.managerName);
+        setUserClubId(slot.clubId);
+        setCampaignType(slot.campaignType);
+        setCurrentWeek(slot.currentWeek);
+        setUserBalance(slot.userBalance);
+        setAllClubs(slot.allClubs);
+        setLeagueFixtures(slot.leagueFixtures);
+        setTournamentFixtures(slot.tournamentFixtures || []);
+        setCupBracket(slot.cupBracket);
+        setCurrentCupRound(slot.currentCupRound as any);
+      }
+    }
+  }, [activeSlotId]);
+
+  // Update current active Slot state payload in memory & persist
+  const saveCurrentSlotProgress = (
+    updatedClubs?: Club[],
+    updatedFixtures?: Fixture[],
+    updatedBracket?: BracketNode[],
+    updatedWeek?: number,
+    updatedRound?: 'Group' | 'R16' | 'QF' | 'SF' | 'F' | 'FINISHED' | 'R32',
+    updatedBalance?: number,
+    updatedTournamentFixtures?: Fixture[]
+  ) => {
+    if (!activeSlotId) return;
+
+    setSaveSlots(prev => prev.map(slot => {
+      if (slot.id === activeSlotId) {
+        return {
+          ...slot,
+          currentWeek: updatedWeek !== undefined ? updatedWeek : currentWeek,
+          userBalance: updatedBalance !== undefined ? updatedBalance : userBalance,
+          allClubs: updatedClubs !== undefined ? updatedClubs : allClubs,
+          leagueFixtures: updatedFixtures !== undefined ? updatedFixtures : leagueFixtures,
+          tournamentFixtures: updatedTournamentFixtures !== undefined ? updatedTournamentFixtures : (slot.tournamentFixtures || tournamentFixtures),
+          cupBracket: updatedBracket !== undefined ? updatedBracket : cupBracket,
+          currentCupRound: (updatedRound !== undefined ? updatedRound : currentCupRound) as any,
+          lastPlayed: Date.now()
+        };
+      }
+      return slot;
+    }));
+  };
+
+  // Create & Register a Brand New Save Career Slot
+  const handleCreateSaveSlot = () => {
+    if (!newManagerName.trim()) {
+      setSimMessage('Please provide a valid Manager Name/Surname to start.');
+      setTimeout(() => setSimMessage(''), 3000);
+      return;
+    }
+
+    const clubsSeeded = seedAllClubs();
+    // Prioritize user-selected club to index 0 so they participate in both SuperLeague and group stage Group A
+    const selectedIdx = clubsSeeded.findIndex(c => c.id === newSelectedClubId);
+    if (selectedIdx !== -1 && selectedIdx !== 0) {
+      const temp = clubsSeeded[0];
+      clubsSeeded[0] = clubsSeeded[selectedIdx];
+      clubsSeeded[selectedIdx] = temp;
+    }
+
+    const teamIds = clubsSeeded.map(c => c.id);
+    const leagueClubs = teamIds.slice(0, 20); // 20 teams playing in Elite League
+
+    const fixturesGen = generateLeagueFixtures20(leagueClubs);
+    const tournamentFixturesGen = generateTournamentGroupFixtures(clubsSeeded); // 32 teams group fixtures (Groups A-H)
+    const bracketGen: BracketNode[] = []; // empty at first, seeded after Week 9
+
+    const newSlot: SaveSlot = {
+      id: `slot-${Date.now()}-${randRange(100, 999)}`,
+      managerName: newManagerName,
+      clubId: newSelectedClubId,
+      campaignType: 'dual',
+      currentWeek: 1,
+      userBalance: START_BUDGET,
+      allClubs: clubsSeeded,
+      leagueFixtures: fixturesGen,
+      tournamentFixtures: tournamentFixturesGen,
+      cupBracket: bracketGen,
+      currentCupRound: 'Group',
+      createdTime: Date.now(),
+      lastPlayed: Date.now()
+    };
+
+    setSaveSlots([newSlot, ...saveSlots]);
+    setActiveSlotId(newSlot.id);
+    setIsCreatingNewSlot(false);
+    setNewManagerName('');
+    
+    setSimMessage(`Career initialized! Welcome Coach ${newSlot.managerName}!`);
+    setTimeout(() => setSimMessage(''), 4000);
+    setCurrentTabProgress('MANAGER');
+  };
+
+  // Delete a Save slot
+  const handleDeleteSaveSlot = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSaveSlots(prev => prev.filter(s => s.id !== id));
+    if (activeSlotId === id) {
+      setActiveSlotId(null);
+    }
+  };
+
+  const handleHardReset = () => {
+    if (activeSlotId) {
+      const slot = saveSlots.find(s => s.id === activeSlotId);
+      if (slot) {
+        const resetClubs = seedAllClubs();
+        
+        // Put user selected club index at 0
+        const selectedIdx = resetClubs.findIndex(c => c.id === userClubId);
+        if (selectedIdx !== -1 && selectedIdx !== 0) {
+          const temp = resetClubs[0];
+          resetClubs[0] = resetClubs[selectedIdx];
+          resetClubs[selectedIdx] = temp;
+        }
+
+        const teamIds = resetClubs.map(c => c.id);
+        const leagueClubs = teamIds.slice(0, 20);
+
+        const resetFixtures = generateLeagueFixtures20(leagueClubs);
+        const resetTournamentFixtures = generateTournamentGroupFixtures(resetClubs);
+        const resetBracket: BracketNode[] = [];
+
+        setAllClubs(resetClubs);
+        setLeagueFixtures(resetFixtures);
+        setTournamentFixtures(resetTournamentFixtures);
+        setCupBracket(resetBracket);
+        setCurrentWeek(1);
+        setCurrentCupRound('Group');
+        setUserBalance(START_BUDGET);
+
+        saveCurrentSlotProgress(resetClubs, resetFixtures, resetBracket, 1, 'Group', START_BUDGET, resetTournamentFixtures);
+        setSimMessage('Career progress reset to fresh week! Ready for kickoff.');
+        setTimeout(() => setSimMessage(''), 3000);
+      }
+    }
+  };
+
+  const currentActiveUserClub = allClubs.find(c => c.id === userClubId) || allClubs[0] || {
+    id: 'placeholder',
+    name: 'Placeholder Club',
+    shortName: 'PLC',
+    color: '#38bdf8',
+    primaryColor: '#38bdf8',
+    secondaryColor: '#ffffff',
+    played: 0,
+    won: 0,
+    drawn: 0,
+    lost: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    goalDifference: 0,
+    points: 0,
+    streak: [],
+    squad: [],
+    coach: { name: 'Placeholder Coach', nationality: 'N/A', specialty: 'Tactics' as any, rating: 50 },
+    mentality: 'Balanced' as TeamMentalityType,
+    trainingFacilities: 1,
+    tacticsFacilities: 1,
+    cardioFacilities: 1,
+    medicalFacilities: 1
+  };
+
+  // Core Simulation clock ticks
+  useEffect(() => {
+    if (isPlaying && activeSimulation) {
+      simRef.current = setTimeout(() => {
+        handleProgressSimOneTick();
+      }, simSpeed);
+    }
+    return () => clearTimeout(simRef.current);
+  }, [isPlaying, activeSimulation, simSpeed]);
+
+  const handleProgressSimOneTick = () => {
+    if (!activeSimulation) return;
+
+    const homeClub = allClubs.find(c => c.id === activeSimulation.homeClubId)!;
+    const awayClub = allClubs.find(c => c.id === activeSimulation.awayClubId)!;
+
+    const updatedSim = simulateMatchTick(activeSimulation, homeClub, awayClub);
+    setActiveSimulation(updatedSim);
+
+    // Mid-match halt at halftime (tick 15) for physical coaching & substitutions panel
+    if (updatedSim.tick === 15) {
+      setIsPlaying(false);
+      const isSpectator = updatedSim.isSpectating || (updatedSim.homeClubId !== userClubId && updatedSim.awayClubId !== userClubId);
+      if (!isSpectator) {
+        setIsHalftimeModalOpen(true);
+      } else {
+        setIsPlaying(true);
+      }
+    }
+
+    if (updatedSim.isFinished) {
+      handleFinalizeAndSettleMatch(updatedSim);
+    }
+  };
+
+  // Commit score, goals, and card rosters of simulated match
+  const handleFinalizeAndSettleMatch = (finalSim: LiveMatchSimulation) => {
+    setIsPlaying(false);
+
+    const weekInfo = DUAL_SCHEDULE.find(s => s.week === currentWeek);
+    const isLeagueMatch = weekInfo ? weekInfo.type === 'league' : true;
+
+    let updatedClubs = [...allClubs];
+    let updatedFixtures = [...leagueFixtures];
+    let updatedTournamentFixtures = [...tournamentFixtures];
+    let updatedBracket = [...cupBracket];
+    let updatedCupRound = currentCupRound;
+
+    const homeClub = updatedClubs.find(c => c.id === finalSim.homeClubId);
+    const awayClub = updatedClubs.find(c => c.id === finalSim.awayClubId);
+
+    // Apply match ratings to active rosters
+    if (homeClub && awayClub) {
+      const diff = finalSim.homeScore - finalSim.awayScore;
+      homeClub.squad.forEach(p => {
+        if (p.isStarting) {
+          const r = randRange(64, 84) / 10 + (diff * 0.3) + (p.goals * 1.5) + (p.assists * 1.0);
+          p.matchRatings = [...(p.matchRatings || []), Number(Math.min(10, Math.max(3, r)).toFixed(1))];
+        }
+      });
+      awayClub.squad.forEach(p => {
+        if (p.isStarting) {
+          const r = randRange(64, 84) / 10 - (diff * 0.3) + (p.goals * 1.5) + (p.assists * 1.0);
+          p.matchRatings = [...(p.matchRatings || []), Number(Math.min(10, Math.max(3, r)).toFixed(1))];
+        }
+      });
+    }
+
+    if (isLeagueMatch) {
+      // 1. Settle simulated user/spectated league fixture
+      updatedFixtures = leagueFixtures.map(f => {
+        if (f.id === finalSim.fixtureId) {
+          return {
+            ...f,
+            isCompleted: true,
+            homeScore: finalSim.homeScore,
+            awayScore: finalSim.awayScore,
+            homeGoalsDetail: finalSim.homeShooters,
+            awayGoalsDetail: finalSim.awayShooters,
+            homePossession: Math.round((finalSim.homePossessionScore / (finalSim.homePossessionScore + finalSim.awayPossessionScore || 1)) * 100),
+            awayPossession: 100 - Math.round((finalSim.homePossessionScore / (finalSim.homePossessionScore + finalSim.awayPossessionScore || 1)) * 100),
+            homeShots: finalSim.homeShots,
+            awayShots: finalSim.awayShots,
+            homeShotsOnTarget: finalSim.homeShotsOnTarget,
+            awayShotsOnTarget: finalSim.awayShotsOnTarget
+          };
+        }
+        return f;
+      });
+
+      // Update league table parameters for both active match clubs
+      if (homeClub && awayClub) {
+        homeClub.played++;
+        awayClub.played++;
+        homeClub.goalsFor += finalSim.homeScore;
+        homeClub.goalsAgainst += finalSim.awayScore;
+        awayClub.goalsFor += finalSim.awayScore;
+        awayClub.goalsAgainst += finalSim.homeScore;
+        homeClub.goalDifference = homeClub.goalsFor - homeClub.goalsAgainst;
+        awayClub.goalDifference = awayClub.goalsFor - awayClub.goalsAgainst;
+
+        if (finalSim.homeScore > finalSim.awayScore) {
+          homeClub.won++; homeClub.points += 3; homeClub.streak = [...(homeClub.streak || []), 'W'];
+          awayClub.lost++; awayClub.streak = [...(awayClub.streak || []), 'L'];
+        } else if (finalSim.homeScore < finalSim.awayScore) {
+          awayClub.won++; awayClub.points += 3; awayClub.streak = [...(awayClub.streak || []), 'W'];
+          homeClub.lost++; homeClub.streak = [...(homeClub.streak || []), 'L'];
+        } else {
+          homeClub.drawn++; homeClub.points += 1; homeClub.streak = [...(homeClub.streak || []), 'D'];
+          awayClub.drawn++; awayClub.points += 1; awayClub.streak = [...(awayClub.streak || []), 'D'];
+        }
+      }
+
+    } else {
+      // 2. Champions Cup Week (Group stage or Knockout stage!)
+      const stage = weekInfo?.stage || 'Group';
+
+      if (stage === 'Group') {
+        // Settle active simulated group match
+        updatedTournamentFixtures = tournamentFixtures.map(f => {
+          if (f.id === finalSim.fixtureId) {
+            return {
+              ...f,
+              isCompleted: true,
+              homeScore: finalSim.homeScore,
+              awayScore: finalSim.awayScore,
+              homePossession: 50,
+              awayPossession: 50,
+              homeShots: finalSim.homeShots,
+              awayShots: finalSim.awayShots
+            };
+          }
+          return f;
+        });
+
+      } else {
+        // Knockout Phase match (R16, QF, SF, F)
+        let winnerId = finalSim.homeScore > finalSim.awayScore ? finalSim.homeClubId : finalSim.awayClubId;
+        let finalHomeScore = finalSim.homeScore;
+        let finalAwayScore = finalSim.awayScore;
+        let hPens: number | undefined = undefined;
+        let aPens: number | undefined = undefined;
+
+        // If tie, resolve by instant penalty simulation
+        if (finalHomeScore === finalAwayScore) {
+          hPens = randRange(3, 5);
+          aPens = hPens === 5 ? randRange(2, 4) : 5;
+          winnerId = hPens > aPens ? finalSim.homeClubId : finalSim.awayClubId;
+        }
+
+        updatedBracket = cupBracket.map(node => {
+          if (node.id === finalSim.fixtureId) {
+            return {
+              ...node,
+              isCompleted: true,
+              homeScore: finalHomeScore,
+              awayScore: finalAwayScore,
+              homePens: hPens,
+              awayPens: aPens,
+              winnerClubId: winnerId
+            };
+          }
+          return node;
+        });
+
+        if (stage === 'F') {
+          updatedCupRound = 'FINISHED';
+          setIsSeasonReviewOpen(true);
+          const championshipWinnerName = allClubs.find(c => c.id === winnerId)?.name || 'Cup Champion';
+          setSimMessage(`CHAMPIONS CONCLUDED! The Prestige Champions Cup trophy goes to ${championshipWinnerName}!`);
+        }
+      }
+    }
+
+    // Award matchday financial payments
+    let nextBalance = userBalance;
+    const isUserPlaying = finalSim.homeClubId === userClubId || finalSim.awayClubId === userClubId;
+    if (isUserPlaying) {
+      let reward = 2200;
+      if (finalSim.homeClubId === userClubId && finalSim.homeScore > finalSim.awayScore) reward += 2800;
+      if (finalSim.awayClubId === userClubId && finalSim.awayScore > finalSim.homeScore) reward += 2800;
+      if (!isLeagueMatch) reward += 1500;
+
+      nextBalance = userBalance + reward;
+      setUserBalance(nextBalance);
+      setSimMessage(`Matchday completed successfully! Budget credited +$${reward.toLocaleString()} matchday yield.`);
+    } else {
+      setSimMessage('Fixture simulation complete! Returned to matchday deck.');
+    }
+
+    // Save states and cache
+    setAllClubs(updatedClubs);
+    setLeagueFixtures(updatedFixtures);
+    setTournamentFixtures(updatedTournamentFixtures);
+    setCupBracket(updatedBracket);
+    setCurrentCupRound(updatedCupRound as any);
+
+    saveCurrentSlotProgress(
+      updatedClubs,
+      updatedFixtures,
+      updatedBracket,
+      currentWeek,
+      updatedCupRound as any,
+      nextBalance,
+      updatedTournamentFixtures
+    );
+
+    setActiveSimulation(null);
+  };
+
+  // Launch Live Match Broadcaster
+  const handleInitiateLiveSimulation = (fixtureId: string, homeId: string, awayId: string, isSpectating?: boolean) => {
+    if (activeSimulation) return;
+
+    setActiveSimulation({
+      fixtureId,
+      homeClubId: homeId,
+      awayClubId: awayId,
+      homeScore: 0,
+      awayScore: 0,
+      tick: 0,
+      isFinished: false,
+      possession: 'home',
+      ballX: 50,
+      ballY: 50,
+      zone: 'MID',
+      events: [
+        { tick: 0, minute: 0, type: 'info', description: `Referee checks watch. Official Kickoff has begun!` }
+      ],
+      homeShooters: [],
+      awayShooters: [],
+      homeShots: 0,
+      awayShots: 0,
+      homeShotsOnTarget: 0,
+      awayShotsOnTarget: 0,
+      homePossessionScore: 50,
+      awayPossessionScore: 50,
+      homeConcededFouls: 0,
+      awayConcededFouls: 0,
+      isSpectating: !!isSpectating
+    });
+
+    setCurrentTabProgress('MATCHDAY');
+    setIsPlaying(true);
+    setSimSpeed(2000); // Always default to Broadcast (90s) speed when watching a live match
+  };
+
+  // Upgrades
+  const handleUpgradeFacilities = (facilityType: 'training' | 'tactics' | 'cardio' | 'medical', cost: number) => {
+    if (userBalance < cost) return;
+    const nextBalance = userBalance - cost;
+    setUserBalance(nextBalance);
+
+    const updated = allClubs.map(c => {
+      if (c.id === userClubId) {
+        if (facilityType === 'training') {
+          return { ...c, trainingFacilities: c.trainingFacilities + 1 };
+        } else if (facilityType === 'tactics') {
+          return { ...c, tacticsFacilities: c.tacticsFacilities + 1 };
+        } else if (facilityType === 'cardio') {
+          return { ...c, cardioFacilities: c.cardioFacilities + 1 };
+        } else if (facilityType === 'medical') {
+          return { ...c, medicalFacilities: (c.medicalFacilities || 1) + 1 };
+        }
+      }
+      return c;
+    });
+
+    setAllClubs(updated);
+    saveCurrentSlotProgress(updated, undefined, undefined, undefined, undefined, nextBalance);
+    setSimMessage(`Infrastructure upgraded! Invested $${cost.toLocaleString()} inside the facility centers.`);
+    setTimeout(() => setSimMessage(''), 2500);
+  };
+
+  const handleBuyPlayer = (newPlayer: Player, cost: number) => {
+    const nextBalance = userBalance - cost;
+    setUserBalance(nextBalance);
+    
+    const updated = allClubs.map(club => {
+      if (club.id === userClubId) {
+        return {
+          ...club,
+          squad: [...club.squad, newPlayer]
+        };
+      }
+      return club;
+    });
+
+    setAllClubs(updated);
+    saveCurrentSlotProgress(updated, undefined, undefined, undefined, undefined, nextBalance);
+  };
+
+  const handleSellPlayer = (playerId: string, value: number) => {
+    const nextBalance = userBalance + value;
+    setUserBalance(nextBalance);
+
+    const updated = allClubs.map(club => {
+      if (club.id === userClubId) {
+        return {
+          ...club,
+          squad: club.squad.filter(p => p.id !== playerId)
+        };
+      }
+      return club;
+    });
+
+    setAllClubs(updated);
+    saveCurrentSlotProgress(updated, undefined, undefined, undefined, undefined, nextBalance);
+  };
+
+  const handleAdjustSquadLineup = (newSquad: Player[]) => {
+    const updated = allClubs.map(club => {
+      if (club.id === userClubId) {
+        return {
+          ...club,
+          squad: newSquad
+        };
+      }
+      return club;
+    });
+    setAllClubs(updated);
+    saveCurrentSlotProgress(updated);
+  };
+
+  const handleTacticalShift = (mentality: TeamMentalityType) => {
+    const updated = allClubs.map(club => {
+      if (club.id === userClubId) {
+        return { ...club, mentality };
+      }
+      return club;
+    });
+    setAllClubs(updated);
+    saveCurrentSlotProgress(updated);
+  };
+
+  const handleAddFunds = (amount: number) => {
+    const nextBal = userBalance + amount;
+    setUserBalance(nextBal);
+    saveCurrentSlotProgress(undefined, undefined, undefined, undefined, undefined, nextBal);
+  };
+
+  // Skip simulation helper (Skips match center and auto-finalizes scores)
+  const handleSkipOrQuickSim = () => {
+    if (!activeSimulation) return;
+    
+    const h = allClubs.find(c => c.id === activeSimulation.homeClubId)!;
+    const a = allClubs.find(c => c.id === activeSimulation.awayClubId)!;
+    
+    // Auto substitutions handled by assistant coach at skip
+    runAssistantSubstitution(h);
+    runAssistantSubstitution(a);
+
+    const fixtureObject = quickSimulateFixture(h, a);
+    
+    const mockFinalSim: LiveMatchSimulation = {
+      ...activeSimulation,
+      homeScore: fixtureObject.homeScore,
+      awayScore: fixtureObject.awayScore,
+      isFinished: true,
+      homeShooters: Array(fixtureObject.homeScore).fill('Assigned Scorer'),
+      awayShooters: Array(fixtureObject.awayScore).fill('Assigned Scorer'),
+      homePossessionScore: 50,
+      awayPossessionScore: 50,
+      homeShots: randRange(8, 14),
+      awayShots: randRange(8, 14),
+    };
+
+    handleFinalizeAndSettleMatch(mockFinalSim);
+  };
+
+  // Quick simulates a raw pending fixture from the Next Match tab
+  const handleQuickSimulateMatch = (fixtureId: string, homeId: string, awayId: string) => {
+    const h = allClubs.find(c => c.id === homeId)!;
+    const a = allClubs.find(c => c.id === awayId)!;
+
+    runAssistantSubstitution(h);
+    runAssistantSubstitution(a);
+
+    const fixtureObject = quickSimulateFixture(h, a);
+    const weekInfo = DUAL_SCHEDULE.find(s => s.week === currentWeek);
+
+    const mockLiveSim: LiveMatchSimulation = {
+      fixtureId,
+      homeClubId: homeId,
+      awayClubId: awayId,
+      homeScore: fixtureObject.homeScore,
+      awayScore: fixtureObject.awayScore,
+      tick: 30,
+      isFinished: true,
+      possession: 'home',
+      ballX: 50,
+      ballY: 50,
+      zone: 'MID',
+      events: [
+        { tick: 30, minute: 90, type: 'info', description: `Quick match simulation settled successfully.` }
+      ],
+      homeShooters: Array(fixtureObject.homeScore).fill('Assigned Scorer'),
+      awayShooters: Array(fixtureObject.awayScore).fill('Assigned Scorer'),
+      homeShots: randRange(8, 14),
+      awayShots: randRange(8, 14),
+      homeShotsOnTarget: randRange(3, 7),
+      awayShotsOnTarget: randRange(3, 7),
+      homePossessionScore: 50,
+      awayPossessionScore: 50,
+      homeConcededFouls: randRange(3, 8),
+      awayConcededFouls: randRange(3, 8),
+      isSpectating: false
+    };
+
+    handleFinalizeAndSettleMatch(mockLiveSim);
+  };
+
+  // Simulates all pending fixtures for the current week (both League or Prestige Champions Cup) and advances campaign week index
+  const handleAdvanceCampaignWeek = () => {
+    let updatedClubs = [...allClubs];
+    let updatedFixtures = [...leagueFixtures];
+    let updatedTournamentFixtures = tournamentFixtures ? [...tournamentFixtures] : [];
+    let updatedBracket = [...cupBracket];
+    let updatedCupRound = currentCupRound;
+
+    const isGroupCupWeek = campaignType === 'dual' && (currentWeek === 3 || currentWeek === 6 || currentWeek === 9);
+    const isBracketCupWeek = campaignType === 'dual' && (currentWeek === 12 || currentWeek === 15 || currentWeek === 18 || currentWeek === 21);
+    const isLeagueRound = !isGroupCupWeek && !isBracketCupWeek;
+
+    if (isLeagueRound) {
+      const pendingLeague = leagueFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+      pendingLeague.forEach(fix => {
+        const homeClub = updatedClubs.find(c => c.id === fix.homeClubId)!;
+        const awayClub = updatedClubs.find(c => c.id === fix.awayClubId)!;
+        const game = quickSimulateFixture(homeClub, awayClub);
+        
+        const target = updatedFixtures.find(f => f.id === fix.id)!;
+        target.homeScore = game.homeScore;
+        target.awayScore = game.awayScore;
+        target.isCompleted = true;
+
+        const hC = updatedClubs.find(c => c.id === fix.homeClubId)!;
+        const aC = updatedClubs.find(c => c.id === fix.awayClubId)!;
+        hC.played++;
+        aC.played++;
+        hC.goalsFor += game.homeScore;
+        hC.goalsAgainst += game.awayScore;
+        aC.goalsFor += game.awayScore;
+        aC.goalsAgainst += game.homeScore;
+        hC.goalDifference = hC.goalsFor - hC.goalsAgainst;
+        aC.goalDifference = aC.goalsFor - aC.goalsAgainst;
+
+        if (game.homeScore > game.awayScore) {
+          hC.won++; hC.points += 3; hC.streak.push('W');
+          aC.lost++; aC.streak.push('L');
+        } else if (game.homeScore < game.awayScore) {
+          aC.won++; aC.points += 3; aC.streak.push('W');
+          hC.lost++; hC.streak.push('L');
+        } else {
+          hC.drawn++; hC.points += 1; hC.streak.push('D');
+          aC.drawn++; aC.points += 1; aC.streak.push('D');
+        }
+      });
+    } else if (isGroupCupWeek) {
+      const pendingCup = updatedTournamentFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+      pendingCup.forEach(fix => {
+        const homeClub = updatedClubs.find(c => c.id === fix.homeClubId)!;
+        const awayClub = updatedClubs.find(c => c.id === fix.awayClubId)!;
+        const game = quickSimulateFixture(homeClub, awayClub);
+
+        const target = updatedTournamentFixtures.find(f => f.id === fix.id)!;
+        target.homeScore = game.homeScore;
+        target.awayScore = game.awayScore;
+        target.isCompleted = true;
+      });
+
+      if (currentWeek === 9) {
+        const qualifiers: string[] = [];
+        for (let gIdx = 0; gIdx < 8; gIdx++) {
+          const standings = getGroupStandingsForGroup(gIdx, updatedClubs, updatedTournamentFixtures);
+          if (standings[0]) qualifiers.push(standings[0].club.id);
+          if (standings[1]) qualifiers.push(standings[1].club.id);
+        }
+        const r16Nodes = generateCupBracket16FromGroups(qualifiers);
+        updatedBracket = r16Nodes;
+        updatedCupRound = 'R16';
+      }
+    } else if (isBracketCupWeek) {
+      const activeBracketRound = currentCupRound;
+      const pendingNodes = updatedBracket.filter(n => n.round === activeBracketRound && !n.isCompleted);
+      pendingNodes.forEach(node => {
+        const hId = node.homeClubId || '';
+        const aId = node.awayClubId || '';
+        if (!hId || !aId) {
+          node.isCompleted = true;
+          node.winnerClubId = hId || aId || allClubs[0].id;
+          return;
+        }
+
+        const homeClub = updatedClubs.find(c => c.id === hId)!;
+        const awayClub = updatedClubs.find(c => c.id === aId)!;
+        const game = quickSimulateFixture(homeClub, awayClub);
+        node.homeScore = game.homeScore;
+        node.awayScore = game.awayScore;
+        node.isCompleted = true;
+
+        if (game.homeScore > game.awayScore) {
+          node.winnerClubId = hId;
+        } else if (game.homeScore < game.awayScore) {
+          node.winnerClubId = aId;
+        } else {
+          const coin = Math.random() > 0.5;
+          node.homePens = coin ? 5 : 4;
+          node.awayPens = coin ? 4 : 5;
+          node.winnerClubId = coin ? hId : aId;
+        }
+      });
+
+      const roundFinished = updatedBracket.filter(n => n.round === activeBracketRound).every(n => n.isCompleted);
+      if (roundFinished) {
+        let nextRound: any = activeBracketRound;
+        if (activeBracketRound === 'R16') {
+          const winners = updatedBracket.filter(b => b.round === 'R16').map(b => b.winnerClubId || '');
+          for (let i = 0; i < 4; i++) {
+            const matchNode = updatedBracket.find(b => b.id === `QF-${i + 1}`);
+            if (matchNode) {
+              matchNode.homeClubId = winners[i * 2] || undefined;
+              matchNode.awayClubId = winners[i * 2 + 1] || undefined;
+            }
+          }
+          nextRound = 'QF';
+        } else if (activeBracketRound === 'QF') {
+          const winners = updatedBracket.filter(b => b.round === 'QF').map(b => b.winnerClubId || '');
+          for (let i = 0; i < 2; i++) {
+            const matchNode = updatedBracket.find(b => b.id === `SF-${i + 1}`);
+            if (matchNode) {
+              matchNode.homeClubId = winners[i * 2] || undefined;
+              matchNode.awayClubId = winners[i * 2 + 1] || undefined;
+            }
+          }
+          nextRound = 'SF';
+        } else if (activeBracketRound === 'SF') {
+          const winners = updatedBracket.filter(b => b.round === 'SF').map(b => b.winnerClubId || '');
+          const matchNode = updatedBracket.find(b => b.id === 'F-1');
+          if (matchNode) {
+            matchNode.homeClubId = winners[0] || undefined;
+            matchNode.awayClubId = winners[1] || undefined;
+          }
+          nextRound = 'F';
+        }
+
+        if (activeBracketRound === 'F') {
+          updatedCupRound = 'FINISHED';
+          setIsSeasonReviewOpen(true);
+          const championshipWinnerName = allClubs.find(c => c.id === updatedBracket.find(b => b.id === 'F-1')?.winnerClubId)?.name || 'Cup Champion';
+          setSimMessage(`CHAMPIONS CONCLUDED! The Prestige Champions Cup trophy goes to ${championshipWinnerName}!`);
+        } else {
+          updatedCupRound = nextRound;
+        }
+      }
+    }
+
+    const recoveryFactor = 16 + ((currentActiveUserClub.medicalFacilities || 1) * 6);
+    updatedClubs.forEach(cli => {
+      cli.squad.forEach(pp => {
+        pp.stamina = Math.min(100, Number((pp.stamina + recoveryFactor).toFixed(1)));
+      });
+    });
+
+    const nextWeek = currentWeek + 1;
+    if (nextWeek > 26) {
+      setIsSeasonReviewOpen(true);
+      setSimMessage('CAMPAIGN YEAR COMPLETED! Both Elite SuperLeague & Prestige Champions Cup are finished. The board is now reviewing your season statistics!');
+    } else {
+      setCurrentWeek(nextWeek);
+      setSimMessage(`Campaign round advanced to Week ${nextWeek}! All CPU matchday outcomes simulated.`);
+    }
+
+    setAllClubs(updatedClubs);
+    setLeagueFixtures(updatedFixtures);
+    setTournamentFixtures(updatedTournamentFixtures);
+    setCupBracket(updatedBracket);
+    setCurrentCupRound(updatedCupRound as any);
+
+    saveCurrentSlotProgress(
+      updatedClubs,
+      updatedFixtures,
+      updatedBracket,
+      nextWeek > 26 ? 26 : nextWeek,
+      updatedCupRound as any,
+      userBalance,
+      updatedTournamentFixtures
+    );
+  };
+
+  // Current active fixtures list
+  const currentWeekFixtures = () => {
+    const weekInfo = DUAL_SCHEDULE.find(s => s.week === currentWeek);
+    const isLeagueMatch = weekInfo ? weekInfo.type === 'league' : true;
+    
+    if (campaignType === 'league') {
+      return leagueFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+    }
+    
+    // For dual campaign type
+    if (isLeagueMatch) {
+      return leagueFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+    } else {
+      // It is a tournament week
+      const stage = weekInfo?.stage || 'R16';
+      if (stage === 'Group') {
+        return tournamentFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+      } else {
+        return cupBracket.filter(n => n.round === stage && !n.isCompleted);
+      }
+    }
+  };
+
+  const activeMatchesToPlay = currentWeekFixtures();
+
+  // Simulates all pending fixtures for the current week without advancing the matchday week timeline itself
+  const handleSimulateAllRemainingMatches = () => {
+    const weekInfo = DUAL_SCHEDULE.find(s => s.week === currentWeek);
+    const isLeagueMatch = weekInfo ? weekInfo.type === 'league' : true;
+
+    let updatedClubs = [...allClubs];
+    let updatedFixtures = [...leagueFixtures];
+    let updatedTournamentFixtures = tournamentFixtures ? [...tournamentFixtures] : [];
+    let updatedBracket = [...cupBracket];
+    let updatedCupRound = currentCupRound;
+
+    if (campaignType === 'league') {
+      const pending = updatedFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+      pending.forEach(match => {
+        const hClub = updatedClubs.find(c => c.id === match.homeClubId)!;
+        const aClub = updatedClubs.find(c => c.id === match.awayClubId)!;
+        const res = quickSimulateFixture(hClub, aClub);
+
+        match.isCompleted = true;
+        match.homeScore = res.homeScore;
+        match.awayScore = res.awayScore;
+        match.homePossession = randRange(41, 59);
+        match.awayPossession = 100 - match.homePossession;
+        match.homeShots = randRange(5, 14);
+        match.awayShots = randRange(5, 14);
+
+        hClub.played++;
+        aClub.played++;
+        hClub.goalsFor += res.homeScore;
+        hClub.goalsAgainst += res.awayScore;
+        aClub.goalsFor += res.awayScore;
+        aClub.goalsAgainst += res.homeScore;
+        hClub.goalDifference = hClub.goalsFor - hClub.goalsAgainst;
+        aClub.goalDifference = aClub.goalsFor - aClub.goalsAgainst;
+
+        if (res.homeScore > res.awayScore) {
+          hClub.won++; hClub.points += 3; hClub.streak = [...(hClub.streak || []), 'W'];
+          aClub.lost++; aClub.streak = [...(aClub.streak || []), 'L'];
+        } else if (res.homeScore < res.awayScore) {
+          aClub.won++; aClub.points += 3; aClub.streak = [...(aClub.streak || []), 'W'];
+          hClub.lost++; hClub.streak = [...(hClub.streak || []), 'L'];
+        } else {
+          hClub.drawn++; hClub.points += 1; hClub.streak = [...(hClub.streak || []), 'D'];
+          aClub.drawn++; aClub.points += 1; aClub.streak = [...(aClub.streak || []), 'D'];
+        }
+      });
+    } else {
+      // dual/tournament week
+      if (isLeagueMatch) {
+         const pending = updatedFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+         pending.forEach(match => {
+            const hClub = updatedClubs.find(c => c.id === match.homeClubId)!;
+            const aClub = updatedClubs.find(c => c.id === match.awayClubId)!;
+            const res = quickSimulateFixture(hClub, aClub);
+
+            match.isCompleted = true;
+            match.homeScore = res.homeScore;
+            match.awayScore = res.awayScore;
+            match.homePossession = randRange(41, 59);
+            match.awayPossession = 100 - match.homePossession;
+            match.homeShots = randRange(5, 14);
+            match.awayShots = randRange(5, 14);
+
+            hClub.played++;
+            aClub.played++;
+            hClub.goalsFor += res.homeScore;
+            hClub.goalsAgainst += res.awayScore;
+            aClub.goalsFor += res.awayScore;
+            aClub.goalsAgainst += res.homeScore;
+            hClub.goalDifference = hClub.goalDifference = hClub.goalsFor - hClub.goalsAgainst;
+            aClub.goalDifference = aClub.goalsFor - aClub.goalsAgainst;
+
+            if (res.homeScore > res.awayScore) {
+              hClub.won++; hClub.points += 3; hClub.streak = [...(hClub.streak || []), 'W'];
+              aClub.lost++; aClub.streak = [...(aClub.streak || []), 'L'];
+            } else if (res.homeScore < res.awayScore) {
+              aClub.won++; aClub.points += 3; aClub.streak = [...(aClub.streak || []), 'W'];
+              hClub.lost++; hClub.streak = [...(hClub.streak || []), 'L'];
+            } else {
+              hClub.drawn++; hClub.points += 1; hClub.streak = [...(hClub.streak || []), 'D'];
+              aClub.drawn++; aClub.points += 1; aClub.streak = [...(aClub.streak || []), 'D'];
+            }
+         });
+      } else {
+         const stage = weekInfo?.stage || 'R16';
+         if (stage === 'Group') {
+            const pendingGroup = updatedTournamentFixtures.filter(f => f.week === currentWeek && !f.isCompleted);
+            pendingGroup.forEach(match => {
+              const mHome = updatedClubs.find(c => c.id === match.homeClubId)!;
+              const mAway = updatedClubs.find(c => c.id === match.awayClubId)!;
+              const res = quickSimulateFixture(mHome, mAway);
+
+              match.isCompleted = true;
+              match.homeScore = res.homeScore;
+              match.awayScore = res.awayScore;
+              match.homePossession = randRange(42, 58);
+              match.awayPossession = 100 - match.homePossession;
+              match.homeShots = randRange(4, 15);
+              match.awayShots = randRange(4, 15);
+
+              const homeAtt = mHome.squad.filter(p => p.position === 'ATT').concat(mHome.squad.filter(p => p.position === 'MID'));
+              const awayAtt = mAway.squad.filter(p => p.position === 'ATT').concat(mAway.squad.filter(p => p.position === 'MID'));
+              if (res.homeScore > 0 && homeAtt.length) {
+                const sc = homeAtt[randRange(0, homeAtt.length - 1)];
+                sc.tournamentGoals = (sc.tournamentGoals || 0) + res.homeScore;
+              }
+              if (res.awayScore > 0 && awayAtt.length) {
+                const sc = awayAtt[randRange(0, awayAtt.length - 1)];
+                sc.tournamentGoals = (sc.tournamentGoals || 0) + res.awayScore;
+              }
+            });
+
+            if (currentWeek === 9) {
+              const qualifiers: string[] = [];
+              for (let g = 0; g < 8; g++) {
+                const standings = getGroupStandingsForGroup(g, updatedClubs, updatedTournamentFixtures);
+                const w1Id = standings[0]?.club.id;
+                const w2Id = standings[1]?.club.id;
+                if (w1Id) qualifiers.push(w1Id);
+                if (w2Id) qualifiers.push(w2Id);
+              }
+              updatedBracket = generateCupBracket16FromGroups(qualifiers);
+              updatedCupRound = 'R16';
+            }
+         } else {
+            // Knockout stage week
+            const pendingNodes = updatedBracket.filter(node => node.round === stage && !node.isCompleted);
+            pendingNodes.forEach(match => {
+              const mHome = updatedClubs.find(c => c.id === match.homeClubId)!;
+              const mAway = updatedClubs.find(c => c.id === match.awayClubId)!;
+              const res = quickSimulateFixture(mHome, mAway);
+
+              let matchWinner = res.homeScore > res.awayScore ? mHome.id : mAway.id;
+              let mockHomePens: number | undefined = undefined;
+              let mockAwayPens: number | undefined = undefined;
+              
+              if (res.homeScore === res.awayScore) {
+                mockHomePens = randRange(3, 5);
+                mockAwayPens = mockHomePens === 5 ? randRange(2, 4) : 5;
+                matchWinner = mockHomePens > mockAwayPens ? mHome.id : mAway.id;
+              }
+
+              match.isCompleted = true;
+              match.homeScore = res.homeScore;
+              match.awayScore = res.awayScore;
+              match.homePens = mockHomePens;
+              match.awayPens = mockAwayPens;
+              match.winnerClubId = matchWinner;
+            });
+
+            // Advance bracket nodes structure based on current level completion
+            const roundFinished = updatedBracket.filter(n => n.round === stage).every(n => n.isCompleted);
+            if (roundFinished) {
+              let nextRound: any = currentCupRound;
+              if (stage === 'R16') {
+                const winners = updatedBracket.filter(b => b.round === 'R16').map(b => b.winnerClubId || '');
+                for (let i = 0; i < 4; i++) {
+                  const matchNode = updatedBracket.find(b => b.id === `QF-${i + 1}`);
+                  if (matchNode) {
+                    matchNode.homeClubId = winners[i * 2] || undefined;
+                    matchNode.awayClubId = winners[i * 2 + 1] || undefined;
+                  }
+                }
+                nextRound = 'QF';
+              } else if (stage === 'QF') {
+                const winners = updatedBracket.filter(b => b.round === 'QF').map(b => b.winnerClubId || '');
+                for (let i = 0; i < 2; i++) {
+                  const matchNode = updatedBracket.find(b => b.id === `SF-${i + 1}`);
+                  if (matchNode) {
+                    matchNode.homeClubId = winners[i * 2] || undefined;
+                    matchNode.awayClubId = winners[i * 2 + 1] || undefined;
+                  }
+                }
+                nextRound = 'SF';
+              } else if (stage === 'SF') {
+                const winners = updatedBracket.filter(b => b.round === 'SF').map(b => b.winnerClubId || '');
+                const matchNode = updatedBracket.find(b => b.id === 'F-1');
+                if (matchNode) {
+                  matchNode.homeClubId = winners[0] || undefined;
+                  matchNode.awayClubId = winners[1] || undefined;
+                }
+                nextRound = 'F';
+              }
+
+              if (stage === 'F') {
+                updatedCupRound = 'FINISHED';
+                setIsSeasonReviewOpen(true);
+                const championshipWinnerName = allClubs.find(c => c.id === updatedBracket.find(b => b.id === 'F-1')?.winnerClubId)?.name || 'Cup Champion';
+                setSimMessage(`CHAMPIONS CONCLUDED! The Prestige Champions Cup trophy goes to ${championshipWinnerName}!`);
+              } else {
+                updatedCupRound = nextRound;
+              }
+            }
+         }
+      }
+    }
+
+    setAllClubs(updatedClubs);
+    setLeagueFixtures(updatedFixtures);
+    setTournamentFixtures(updatedTournamentFixtures);
+    setCupBracket(updatedBracket);
+    setCurrentCupRound(updatedCupRound as any);
+    setSimMessage('Simulated remaining fixtures for this week!');
+
+    saveCurrentSlotProgress(
+      updatedClubs,
+      updatedFixtures,
+      updatedBracket,
+      currentWeek,
+      updatedCupRound as any,
+      userBalance,
+      updatedTournamentFixtures
+    );
+  };
+
+  // Dossier Helpers
+  const handleOpenPlayerDossier = (id: string) => {
+    setActivePlayerDossierId(id);
+    setActiveClubDossierId(null);
+  };
+
+  const handleOpenClubDossier = (id: string) => {
+    setActiveClubDossierId(id);
+    setActivePlayerDossierId(null);
+  };
+
+  // Find referenced models for Dossier Modal
+  const getDossierPlayerModel = (): Player | null => {
+    if (!activePlayerDossierId) return null;
+    for (const club of allClubs) {
+      const match = club.squad.find(p => p.id === activePlayerDossierId);
+      if (match) return match;
+    }
+    return null;
+  };
+
+  const getDossierClubModel = (): Club | null => {
+    if (!activeClubDossierId) return null;
+    return allClubs.find(c => c.id === activeClubDossierId) || null;
+  };
+
+  const dossierPlayer = getDossierPlayerModel();
+  const dossierClub = getDossierClubModel();
+
+  // End of Season Choices handler
+  const handleSeasonResolution = (choice: 'stay' | 'change' | 'reset') => {
+    setIsSeasonReviewOpen(false);
+
+    if (choice === 'stay') {
+      // Keeps facility level and cash operations budget, but regenerates fresh week cycles!
+      const teamIds = allClubs.map(c => c.id);
+      const leagueClubs = teamIds.slice(0, 20);
+      const cupClubs = teamIds.slice(20, 36);
+
+      const resetFixtures = generateLeagueFixtures20(leagueClubs);
+      const resetBracket = generateCupBracket16FromGroups([]);
+
+      // Clean stats points for fresh campaign years
+      const resetStatsClubs = allClubs.map(c => ({
+        ...c,
+        played: 0, won: 0, drawn: 0, lost: 0, points: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, streak: []
+      }));
+
+      setAllClubs(resetStatsClubs);
+      setLeagueFixtures(resetFixtures);
+      setCupBracket(resetBracket);
+      setCurrentWeek(1);
+      setCurrentCupRound('R16');
+
+      saveCurrentSlotProgress(resetStatsClubs, resetFixtures, resetBracket, 1, 'R16', userBalance);
+      setSimMessage('Contract Prolonged! Stayed in first seat of the club for another year.');
+    } else if (choice === 'change') {
+      // Pick a random other club from SuperLeague to manage!
+      const availableClubs = allClubs.filter(c => c.id !== userClubId).slice(0, 8);
+      const nextClub = availableClubs[randRange(0, availableClubs.length - 1)] || allClubs[2];
+      setUserClubId(nextClub.id);
+
+      const teamIds = allClubs.map(c => c.id);
+      const leagueClubs = teamIds.slice(0, 20);
+      const cupClubs = teamIds.slice(20, 36);
+
+      const resetFixtures = generateLeagueFixtures20(leagueClubs);
+      const resetBracket = generateCupBracket16FromGroups([]);
+
+      const resetStatsClubs = allClubs.map(c => ({
+        ...c,
+        played: 0, won: 0, drawn: 0, lost: 0, points: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, streak: []
+      }));
+
+      setAllClubs(resetStatsClubs);
+      setLeagueFixtures(resetFixtures);
+      setCupBracket(resetBracket);
+      setCurrentWeek(1);
+      setCurrentCupRound('R16');
+
+      saveCurrentSlotProgress(resetStatsClubs, resetFixtures, resetBracket, 1, 'R16', userBalance);
+      setSimMessage(`Job Accepted! Transferred to direct operations at ${nextClub.name}!`);
+    } else {
+      handleHardReset();
+    }
+    setCurrentTabProgress('MANAGER');
+  };
+
+  // Render Selection of career profiles if slot is empty
+  if (!activeSlotId) {
+    return (
+      <div className="min-h-screen w-screen bg-[#07090d] text-slate-200 p-6 md:p-12 flex flex-col items-center justify-center text-left select-none relative overflow-y-auto">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-sky-950/20 via-transparent to-transparent pointer-events-none"></div>
+
+        <div className="max-w-4xl w-full space-y-8 animate-fadeIn">
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 bg-gradient-to-tr from-sky-400 to-emerald-400 rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(56,189,248,0.25)] mx-auto border border-white/10">
+              <Trophy className="text-black font-black w-8 h-8" />
+            </div>
+            <h1 className="text-3xl font-black text-white tracking-tight uppercase">SportSim <span className="text-sky-400 font-extrabold italic bg-sky-500/10 px-2.5 py-0.5 rounded border border-sky-400/20">Pro</span></h1>
+            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">Immersive Football Club Management Dashboard</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+            {/* Create Slot Console */}
+            <div className="bg-[#121620] border border-white/10 rounded-2xl p-6 space-y-6">
+              <h2 className="text-md font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                <PlusCircle className="w-5 h-5 text-sky-400" />
+                Initialize New Tactical Career Slot
+              </h2>
+
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block">First Team Manager Surname:</label>
+                  <input
+                    type="text"
+                    placeholder="Enter surname (e.g. Ferguson)..."
+                    value={newManagerName}
+                    onChange={e => setNewManagerName(e.target.value)}
+                    className="w-full bg-[#1c2230] border border-white/10 p-3 rounded-xl text-white text-xs font-semibold focus:border-sky-500 outline-none transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block">Assign Initial Club:</label>
+                  <select
+                    value={newSelectedClubId}
+                    onChange={e => setNewSelectedClubId(e.target.value)}
+                    className="w-full bg-[#1c2230] border border-white/10 p-3 rounded-xl text-white text-xs font-semibold outline-none focus:border-sky-500 transition-all cursor-pointer"
+                  >
+                    <option value="club-1">Crestwood United (OVR: 86)</option>
+                    <option value="club-2">Kingsbury FC (OVR: 86)</option>
+                    <option value="club-3">Skywards City (OVR: 84)</option>
+                    <option value="club-4">Meridian Ath (OVR: 85)</option>
+                    <option value="club-5">Solaris Wanderers (OVR: 80)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block">Campaign Operations Mode:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'dual' as const, title: 'Pro Dual', desc: 'League + Cups' },
+                      { id: 'league' as const, title: 'SuperLeague Only', desc: '19 weeks' },
+                      { id: 'cup' as const, title: 'Cup Only', desc: 'Knockout' }
+                    ].map(mode => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setNewCampaignType(mode.id)}
+                        className={`p-2.5 rounded-xl border text-center cursor-pointer transition-all ${
+                          newCampaignType === mode.id
+                            ? 'bg-sky-500 text-black border-sky-400 font-bold'
+                            : 'bg-slate-900 text-slate-400 border-white/5 hover:border-white/15'
+                        }`}
+                      >
+                        <span className="text-xs block font-bold">{mode.title}</span>
+                        <span className="text-[8px] opacity-70 block mt-0.5">{mode.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleCreateSaveSlot}
+                  className="w-full py-3 bg-gradient-to-r from-sky-500 to-sky-450 text-black text-xs font-black uppercase tracking-wider rounded-xl hover:scale-[1.01] transition-all cursor-pointer shadow-md"
+                >
+                  START FIRST MATCHDAY WEEK
+                </button>
+              </div>
+            </div>
+
+            {/* List Existing Slots */}
+            <div className="bg-[#121620] border border-white/10 rounded-2xl p-6 space-y-4 flex flex-col justify-between">
+              <div className="space-y-4">
+                <h2 className="text-md font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-emerald-450" />
+                  Select Career Profile Database
+                </h2>
+
+                {saveSlots.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-slate-500 font-mono italic border border-dashed border-white/5 rounded-xl">
+                    No registered career profiles found. Create a profile on the left to start!
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                    {saveSlots.map(slot => (
+                      <div
+                        key={slot.id}
+                        onClick={() => setActiveSlotId(slot.id)}
+                        className="bg-white/5 hover:bg-white/10 border border-white/5 hover:border-sky-500/40 p-3.5 rounded-xl flex justify-between items-center transition-all cursor-pointer group"
+                      >
+                        <div>
+                          <h4 className="text-xs font-black uppercase text-white tracking-tight">{slot.managerName}</h4>
+                          <div className="flex gap-2 text-[9px] font-mono text-slate-450 mt-1 uppercase">
+                            <span>Club: <strong>{slot.allClubs.find(c => c.id === slot.clubId)?.name || 'Crestwood'}</strong></span>
+                            <span>•</span>
+                            <span>Mode: <strong>{slot.campaignType}</strong></span>
+                            <span>•</span>
+                            <span>Wk: <strong>{slot.currentWeek}</strong></span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Trash2
+                            onClick={(e) => handleDeleteSaveSlot(slot.id, e)}
+                            className="w-4 h-4 text-rose-500 hover:text-rose-400 opacity-60 hover:opacity-100 shrink-0 cursor-pointer"
+                            title="Delete Save"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-normal border-t border-white/5 pt-3">
+                All data is synchronized inside your browser. No third party platforms can audit your progress records dynamically.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen w-screen bg-[#090b0f] text-slate-200 font-sans overflow-hidden select-none text-left">
+      
+      {/* 1. LEFT SIDEBAR: PREMIUM OPERATIONS NAVIGATION */}
+      <nav id="sidebar-rail" className="w-20 md:w-24 flex flex-col items-center py-6 border-r border-white/10 bg-[#0c0f16] justify-between z-10 shrink-0">
+        <div className="flex flex-col items-center gap-8 w-full">
+          {/* LOGO */}
+          <div 
+            onClick={() => setActiveSlotId(null)}
+            className="w-12 h-12 bg-gradient-to-tr from-sky-400 to-emerald-400 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.2)] cursor-pointer"
+            title="Return to Career Selection Grid"
+          >
+            <Trophy className="text-black font-black w-6 h-6 shrink-0" />
+          </div>
+
+          {/* SIDER BAR LIST */}
+          <div className="flex flex-col gap-3 w-full px-2">
+            {[
+              { id: 'MANAGER' as const, label: 'Manager Suite', icon: Briefcase },
+              { id: 'NEXT_MATCH' as const, label: 'Next Match', icon: Zap, notify: activeSimulation ? 'LIVE' : undefined },
+              { id: 'FIXTURES' as const, label: 'Fixtures', icon: Calendar },
+              { id: 'STANDINGS' as const, label: 'Standings', icon: Trophy },
+              { id: 'ANALYTICS' as const, label: 'Analytics', icon: BarChart3 },
+              { id: 'ALL_TEAMS' as const, label: 'All Teams', icon: Globe }
+            ].map(item => {
+              const Icon = item.icon;
+              const isSelected = currentTabProgress === item.id;
+              return (
+                <button
+                  key={item.id}
+                  id={`nav-tab-${item.id}`}
+                  onClick={() => setCurrentTabProgress(item.id)}
+                  className={`flex flex-col items-center py-2.5 rounded-xl transition-all relative cursor-pointer w-full group ${
+                    isSelected 
+                      ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black font-mono' 
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Icon className="w-4.5 h-4.5 shrink-0" />
+                  <span className="text-[8px] mt-1 font-bold uppercase tracking-widest text-center hidden md:block scale-90">
+                    {item.label.split(' ')[0]}
+                  </span>
+                  
+                  {item.notify && (
+                    <span className="absolute top-1 right-2 w-5 text-center bg-red-500 text-black font-mono font-black text-[7px] py-[2px] rounded-full animate-pulse uppercase">
+                      {item.notify}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* LOG OUT SAVE SLOT */}
+        <div className="space-y-4">
+          <button
+            onClick={() => setActiveSlotId(null)}
+            className="px-2 py-1.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-all border border-white/5 cursor-pointer text-[9px] uppercase font-bold text-center font-mono"
+            title="Log Out to save Slot career profile"
+          >
+            SAVES
+          </button>
+        </div>
+      </nav>
+
+      {/* 2. RIGHT CONTAINER */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        
+        {/* HEADER TOP DISPLAY */}
+        <header className="h-20 flex items-center justify-between px-6 bg-[#0c0f16] border-b border-white/5 shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <h1 className="text-lg md:text-xl font-black tracking-tight text-white uppercase flex items-center gap-1">
+                SportSim <span className="text-sky-400 text-opacity-100 font-extrabold italic bg-sky-500/5 px-2 py-0.5 rounded border border-sky-400/10">Pro</span>
+              </h1>
+              <div className="text-[9px] text-slate-400 uppercase font-mono tracking-wider mt-0.5 flex items-center gap-1">
+                <span>First Team Operations Manager Console</span>
+                <span className="text-slate-600">•</span>
+                <span className="text-emerald-400 font-extrabold bg-emerald-500/10 border border-emerald-500/20 px-1 py-0.2 rounded uppercase">Dual Season Active</span>
+              </div>
+            </div>
+
+            {/* Campaign Schedule Overview readout (no pills/buttons selection) */}
+            <div className="bg-slate-900 border border-white/5 p-2 rounded-xl flex items-center gap-2.5 ml-6 text-xs text-slate-350">
+              <span className="text-[9px] text-slate-500 font-mono uppercase tracking-wider block">CURRENT ROUND STATUS:</span>
+              <span className="text-[11px] text-white font-mono font-black uppercase">
+                Week {currentWeek} / 26
+              </span>
+              <span className="text-slate-700">|</span>
+              <span className="text-[11px] text-[#facc15] font-bold uppercase tracking-wide">
+                {DUAL_SCHEDULE[currentWeek - 1]?.label || `League Matchday ${currentWeek}`}
+              </span>
+            </div>
+          </div>
+
+          {/* RIGHT BALANCE DISPLAY HUD AND USER CREST */}
+          <div className="flex items-center gap-6">
+            <div className="flex flex-col items-end">
+              <span className="text-[9px] uppercase text-slate-500 font-bold tracking-widest mb-0.5 flex items-center gap-1">
+                <Wallet className="w-3 h-3 text-emerald-400" />
+                Club Operations Budget
+              </span>
+              <span className="text-emerald-450 font-mono font-black text-xl leading-none">
+                ${userBalance.toLocaleString()}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2.5">
+              <div 
+                className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs uppercase shadow-inner border border-white/15"
+                style={{ backgroundColor: `${currentActiveUserClub.color}25`, color: currentActiveUserClub.color }}
+              >
+                {currentActiveUserClub.name.substring(0, 2)}
+              </div>
+              <div className="text-left hidden md:block">
+                <span className="text-white text-xs font-black block">{managerName}</span>
+                <span className="text-[9px] text-[#94a3b8] block uppercase font-mono tracking-wider">{currentActiveUserClub.name}</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* STATUS BANNER */}
+        {simMessage && (
+          <div className="bg-emerald-950/40 border-y border-emerald-500/20 text-emerald-350 px-6 py-2 text-[11px] font-bold flex items-center gap-2 animate-fadeIn uppercase tracking-wider shrink-0 transition-all">
+            <Sparkles className="w-4 h-4 text-emerald-400 flex-shrink-0 animate-spin-slow" />
+            <span>{simMessage}</span>
+          </div>
+        )}
+
+        {/* MAIN PANEL CONTENT VIEW */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[#090b0f]">
+          
+          {currentTabProgress === 'MANAGER' && (
+            <ManagerSuite
+              userClub={currentActiveUserClub}
+              allClubs={allClubs}
+              userBalance={userBalance}
+              onUpgradeFacilities={handleUpgradeFacilities}
+              onBuyPlayer={handleBuyPlayer}
+              onSellPlayer={handleSellPlayer}
+              onAdjustSquadLineup={handleAdjustSquadLineup}
+              onAddFunds={handleAddFunds}
+              onTapPlayer={handleOpenPlayerDossier}
+            />
+          )}
+
+          {currentTabProgress === 'NEXT_MATCH' && (
+            <NextMatch
+              userClub={currentActiveUserClub}
+              allClubs={allClubs}
+              campaignType={campaignType}
+              currentWeek={currentWeek}
+              currentCupRound={currentCupRound}
+              leagueFixtures={leagueFixtures}
+              tournamentFixtures={tournamentFixtures || []}
+              cupBracket={cupBracket}
+              onStartMatch={(fixtureId, homeId, awayId) => {
+                handleInitiateLiveSimulation(fixtureId, homeId, awayId, false);
+              }}
+              onQuickSimMatch={(fixtureId, homeId, awayId) => {
+                handleQuickSimulateMatch(fixtureId, homeId, awayId);
+              }}
+              onAdvanceWeek={handleAdvanceCampaignWeek}
+              onTapClub={handleOpenClubDossier}
+              onTapPlayer={handleOpenPlayerDossier}
+              userMentality={currentActiveUserClub.mentality}
+              onChangeUserMentality={handleTacticalShift}
+              activeMatchesToPlay={activeMatchesToPlay}
+            />
+          )}
+
+          {currentTabProgress === 'FIXTURES' && (
+            <div>
+              {activeSimulation ? (
+                <div className="space-y-4">
+                  {/* Skip Header Banner */}
+                  <div className="bg-[#121620] border border-white/10 p-3.5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 text-xs leading-none">
+                    <span className="text-slate-400 font-bold uppercase tracking-wider block">⚡ Want to instantly simulated results? Complete this game with a single tab:</span>
+                    <button
+                      onClick={handleSkipOrQuickSim}
+                      className="px-4 py-2 bg-rose-500 hover:bg-rose-400 text-black font-extrabold uppercase rounded-lg cursor-pointer text-[10px] tracking-wider transition-all"
+                    >
+                      Instant Simulated Match Result
+                    </button>
+                  </div>
+
+                  <MatchCenter
+                    simulation={activeSimulation}
+                    homeClub={allClubs.find(c => c.id === activeSimulation.homeClubId)!}
+                    awayClub={allClubs.find(c => c.id === activeSimulation.awayClubId)!}
+                    isPlaying={isPlaying}
+                    simSpeed={simSpeed}
+                    onTogglePlay={() => setIsPlaying(!isPlaying)}
+                    onStepSimulation={handleProgressSimOneTick}
+                    onSetSpeed={setSimSpeed}
+                    onChangeUserMentality={handleTacticalShift}
+                    userClubId={userClubId}
+                    onTapPlayer={handleOpenPlayerDossier}
+                    onTapClub={handleOpenClubDossier}
+                  />
+                </div>
+              ) : (
+                <div className="max-w-4xl mx-auto bg-[#121620] border border-white/10 rounded-2xl p-6 space-y-6">
+                  <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-sky-500/10 rounded-xl flex items-center justify-center text-sky-400 border border-sky-500/20 shadow">
+                        <Tv className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <div>
+                        <h2 className="text-md font-black text-white uppercase tracking-tight">Campaign Fixtures & Broadcast deck</h2>
+                        <p className="text-xs text-slate-400">
+                          Launch real-time interactive match servers. Manage user matchday lineups, or spectate any CPU fixture live!
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900 border border-white/5 px-3 py-1.5 rounded-xl font-mono text-center shrink-0">
+                      <span className="text-[9px] uppercase text-slate-500 block leading-none font-bold">CURRENT CAMPAIGN ROUND</span>
+                      <span className="text-xs font-black text-sky-400 uppercase mt-1 block">WEEK {currentWeek} / 26</span>
+                    </div>
+                  </div>
+
+                  {activeMatchesToPlay.length === 0 ? (
+                    <div className="p-8 text-center space-y-4">
+                      <div className="py-5 bg-black/40 border border-emerald-500/20 text-emerald-400 rounded-xl text-xs font-black uppercase flex flex-col items-center justify-center gap-2">
+                        <CheckCircle2 className="w-8 h-8 text-emerald-400 animate-bounce mb-1" />
+                        <span>All fixtures completed for this session round!</span>
+                      </div>
+                      
+                      <button
+                        onClick={handleAdvanceCampaignWeek}
+                        className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all shadow"
+                      >
+                        Advance to Week {currentWeek + 1}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-slate-900/[0.45] border border-white/5 p-4 rounded-2xl">
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono font-black block">
+                            Scheduled matches this week ({campaignType === 'league' || (campaignType === 'dual' && currentWeek % 2 !== 0) ? 'League Matchday' : 'Prestige Champions Cup'}):
+                          </span>
+                          <span className="text-[9px] text-[#22c55e] font-mono uppercase bg-[#22c55e]/10 px-2 py-0.5 rounded border border-[#22c55e]/20 inline-block font-bold">
+                            {activeMatchesToPlay.length} matches pending
+                          </span>
+                        </div>
+                        <button
+                          onClick={handleSimulateAllRemainingMatches}
+                          className="px-4 py-2 bg-sky-500 hover:bg-sky-450 disabled:opacity-50 text-black text-[10px] font-black uppercase tracking-wider rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                        >
+                          Simulate All matches
+                        </button>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {activeMatchesToPlay.map(match => {
+                          const h = allClubs.find(c => c.id === match.homeClubId)!;
+                          const a = allClubs.find(c => c.id === match.awayClubId)!;
+                          const isUserGame = h.id === userClubId || a.id === userClubId;
+
+                          return (
+                            <div
+                              key={match.id}
+                              className={`p-4 rounded-2xl flex flex-col justify-between border transition-all relative overflow-hidden ${
+                                isUserGame 
+                                  ? 'bg-sky-500/[0.03] border-sky-400/30 shadow-[0_0_15px_rgba(56,189,248,0.02)]' 
+                                  : 'bg-white/5 border-white/5 hover:border-white/10'
+                              }`}
+                            >
+                              {/* Glowing tag for User match */}
+                              {isUserGame && (
+                                <span className="absolute top-2 right-2 bg-sky-500 text-black text-[7px] font-black font-mono tracking-widest px-1.5 py-0.5 rounded-full z-10">
+                                  YOUR GAME
+                                </span>
+                              )}
+
+                              {/* Teams matchup */}
+                              <div className="space-y-3 mb-4">
+                                <div className="flex justify-between items-center text-xs">
+                                  <div className="flex items-center gap-2 max-w-[170px]">
+                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: h.color }}></div>
+                                    <span 
+                                      onClick={() => handleOpenClubDossier(h.id)}
+                                      className={`font-black truncate cursor-pointer hover:underline hover:text-sky-450 ${h.id === userClubId ? 'text-sky-400' : 'text-slate-200'}`}
+                                    >
+                                      {h.name}
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-500 font-mono text-[10px]">OVR {Math.round(h.squad.reduce((s, p) => s + p.rating, 0) / h.squad.length)}</span>
+                                </div>
+
+                                <div className="flex justify-between items-center text-xs">
+                                  <div className="flex items-center gap-2 max-w-[170px]">
+                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: a.color }}></div>
+                                    <span 
+                                      onClick={() => handleOpenClubDossier(a.id)}
+                                      className={`font-black truncate cursor-pointer hover:underline hover:text-sky-450 ${a.id === userClubId ? 'text-sky-400' : 'text-slate-200'}`}
+                                    >
+                                      {a.name}
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-500 font-mono text-[10px]">OVR {Math.round(a.squad.reduce((s, p) => s + p.rating, 0) / a.squad.length)}</span>
+                                </div>
+                              </div>
+
+                              {/* Trigger button */}
+                              {isUserGame ? (
+                                <button
+                                  id={`coach-your-club-${match.id}`}
+                                  onClick={() => handleInitiateLiveSimulation(match.id, h.id, a.id, false)}
+                                  className="w-full py-2.5 bg-sky-500 hover:bg-sky-400 text-black text-[10px] tracking-wider uppercase font-black rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                                >
+                                  <Play className="w-3.5 h-3.5 fill-black" />
+                                  COACH YOUR CLUB
+                                </button>
+                              ) : (
+                                <button
+                                  id={`spectate-cpu-${match.id}`}
+                                  onClick={() => handleInitiateLiveSimulation(match.id, h.id, a.id, true)}
+                                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 text-[10px] tracking-wider uppercase font-extrabold rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                                >
+                                  <Play className="w-3.5 h-3.5 text-slate-400" />
+                                  Spectate Live Broadcast
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {currentTabProgress === 'STANDINGS' && (
+            <LeagueTable
+              allClubs={allClubs}
+              fixtures={leagueFixtures}
+              currentWeek={currentWeek}
+              userClubId={userClubId}
+              onTapPlayer={handleOpenPlayerDossier}
+              onTapClub={handleOpenClubDossier}
+              tournamentFixtures={tournamentFixtures}
+              cupBracket={cupBracket}
+              currentCupRound={currentCupRound}
+              onAdvanceWeek={activeMatchesToPlay.length === 0 ? handleAdvanceCampaignWeek : undefined}
+            />
+          )}
+
+          {currentTabProgress === 'ANALYTICS' && (
+            <AnalyticsCenter
+              allClubs={allClubs}
+              leagueFixtures={leagueFixtures}
+              tournamentFixtures={tournamentFixtures || []}
+              onTapPlayer={handleOpenPlayerDossier}
+              onTapClub={handleOpenClubDossier}
+            />
+          )}
+
+          {currentTabProgress === 'ALL_TEAMS' && (
+            <AllTeams
+              allClubs={allClubs}
+              onTapClub={handleOpenClubDossier}
+              userClubId={userClubId}
+            />
+          )}
+
+        </main>
+      </div>
+
+      {/* 3. DOSSIER DIALOG PORTALS (UNIVERSAL LINK POPUP) */}
+      {dossierPlayer && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#121620] border border-white/10 w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative text-left">
+            
+            {/* Header layout */}
+            <div className="p-5 border-b border-white/5 relative bg-gradient-to-r from-sky-500/10 to-transparent">
+              <span className={`absolute top-4 right-4 px-2 py-0.5 rounded font-mono font-black text-[9px] uppercase tracking-wider ${
+                dossierPlayer.position === 'GK' ? 'bg-orange-500/20 text-orange-400' :
+                dossierPlayer.position === 'DEF' ? 'bg-sky-500/20 text-sky-400' :
+                dossierPlayer.position === 'MID' ? 'bg-emerald-500/20 text-emerald-400' :
+                'bg-rose-500/20 text-rose-455'
+              }`}>
+                {dossierPlayer.position} Role
+              </span>
+
+              <h2 className="text-lg font-black text-white">{dossierPlayer.name}</h2>
+              <p className="text-[9px] font-mono text-slate-500 uppercase mt-1">Player Profile Registry Dossier System</p>
+            </div>
+
+            {/* Dossier Tabs */}
+            <div className="flex bg-slate-900 border-b border-white/5">
+              <button
+                onClick={() => setDossierTypeTab('STATS')}
+                className={`flex-1 py-2 text-xs uppercase font-extrabold tracking-wider border-b-2 transition-all ${
+                  dossierTypeTab === 'STATS' ? 'border-sky-500 text-sky-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Season Metrics Stats
+              </button>
+              <button
+                onClick={() => setDossierTypeTab('QUALITIES')}
+                className={`flex-1 py-2 text-xs uppercase font-extrabold tracking-wider border-b-2 transition-all ${
+                  dossierTypeTab === 'QUALITIES' ? 'border-sky-500 text-sky-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Technical Qualities
+              </button>
+            </div>
+
+            {/* Dossier Tab Content */}
+            <div className="p-5 space-y-4">
+              {dossierTypeTab === 'STATS' ? (
+                <div className="space-y-3 text-xs">
+                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
+                    <span className="text-slate-500">Global OVR Quality index:</span>
+                    <strong className="text-white text-sm bg-slate-800 px-2 py-0.5 rounded">{dossierPlayer.rating} Rating</strong>
+                  </div>
+                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
+                    <span className="text-slate-500">Goals Scored this Season:</span>
+                    <strong className="text-emerald-400 text-sm">{dossierPlayer.goals} G</strong>
+                  </div>
+                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
+                    <span className="text-slate-500">Assists Contributed:</span>
+                    <strong className="text-sky-455 text-sm">{dossierPlayer.assists} A</strong>
+                  </div>
+                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
+                    <span className="text-slate-500">Yellow / Red Card Warnings:</span>
+                    <span className="flex items-center gap-1.5 text-slate-200 font-extrabold">
+                      <span className="bg-amber-400 w-3 h-4 rounded-sm inline-block"></span> {dossierPlayer.yellowCards}
+                      <span className="bg-red-500 w-3 h-4 rounded-sm inline-block"></span> {dossierPlayer.redCards}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
+                    <span className="text-slate-500">Stamina Conditioning:</span>
+                    <strong className="text-[#22c55e]">{Math.round(dossierPlayer.stamina)}% Fit</strong>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 text-xs font-mono">
+                  {Object.entries(dossierPlayer.attributes || {}).map(([key, value]) => (
+                    <div key={key}>
+                      <div className="flex justify-between text-[11px] mb-1 capitalize text-slate-400">
+                        <span>{key} index rating:</span>
+                        <span className="text-white font-extrabold">{value}</span>
+                      </div>
+                      <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+                        <div className="h-full bg-sky-500" style={{ width: `${value}%` }}></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-slate-900/80 border-t border-white/5 text-center">
+              <button
+                onClick={() => setActivePlayerDossierId(null)}
+                className="w-full py-2 bg-sky-500 hover:bg-sky-400 text-black text-xs font-black uppercase tracking-widest rounded-xl hover:scale-[1.01] transition-all cursor-pointer"
+              >
+                Close Profile Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dossierClub && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#121620] border border-white/10 w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl relative text-left">
+            
+            {/* Header info */}
+            <div className="p-5 border-b border-white/5 relative" style={{ background: `linear-gradient(135deg, ${dossierClub.color}25, transparent)` }}>
+              <h2 className="text-lg font-black text-white uppercase flex items-center gap-2">
+                <span className="w-3.5 h-3.5 rounded-full inline-block" style={{ backgroundColor: dossierClub.color }}></span>
+                {dossierClub.name} Profile
+              </h2>
+              <p className="text-[9px] font-mono text-slate-500 uppercase mt-1">Club Management & Tactical Registry</p>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[380px] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div className="bg-[#1c2230] p-3 rounded-xl border border-white/5">
+                  <span className="text-slate-500 font-bold block uppercase text-[8px] font-mono mb-1">Assigned Head Coach</span>
+                  <span className="text-white font-extrabold block text-sm">{dossierClub.coach.name}</span>
+                  <span className="text-[9px] text-[#94a3b8] block mt-0.5">{dossierClub.coach.nationality} ({dossierClub.coach.specialty} coach)</span>
+                </div>
+                <div className="bg-[#1c2230] p-3 rounded-xl border border-white/5">
+                  <span className="text-slate-500 font-bold block uppercase text-[8px] font-mono mb-1">Club Mentality Style</span>
+                  <span className="text-amber-500 font-extrabold block text-sm">{dossierClub.mentality}</span>
+                </div>
+              </div>
+
+              {/* Club Squad Table linking inside */}
+              <div className="space-y-2">
+                <span className="text-[9px] font-mono text-slate-450 uppercase font-black tracking-widest block border-b border-white/5 pb-1">
+                  TACTICAL ROSTER SQUAD
+                </span>
+                
+                <div className="divide-y divide-white/5 text-xs">
+                  {dossierClub.squad.map((player) => (
+                    <div 
+                      key={player.id}
+                      onClick={() => handleOpenPlayerDossier(player.id)}
+                      className="py-2.5 flex justify-between items-center hover:bg-white/5 px-1 rounded-md transition-all cursor-pointer group"
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-bold text-white group-hover:text-sky-400 hover:underline">{player.name}</span>
+                        <span className="text-[8px] text-slate-500 font-mono">ID: #{player.id.substring(player.id.lastIndexOf('-') + 1)}</span>
+                      </div>
+                      <div className="flex gap-2.5 items-center">
+                        <span className="px-1 text-[8px] font-black uppercase tracking-wider rounded bg-white/5 text-slate-450">{player.position}</span>
+                        <span className="font-mono font-black text-emerald-400 bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">{player.rating}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-900/80 border-t border-white/5 text-center">
+              <button
+                onClick={() => setActiveClubDossierId(null)}
+                className="w-full py-2 bg-sky-500 hover:bg-sky-400 text-black text-xs font-black uppercase tracking-widest rounded-xl hover:scale-[1.01] transition-all cursor-pointer"
+              >
+                Close Club Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. HALFTIME COACHING BOARD MODAL */}
+      {isHalftimeModalOpen && activeSimulation && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn text-left">
+          <div className="bg-[#121620] border border-white/10 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl relative">
+            <div className="p-5 border-b border-white/5 bg-gradient-to-r from-amber-500/10 to-transparent flex justify-between items-center">
+              <div>
+                <h2 className="text-md font-black text-white uppercase tracking-tight flex items-center gap-1.5">
+                  <ShieldAlert className="w-5 h-5 text-amber-500 animate-pulse animate-bounce" />
+                  HALFTIME TEAM TALK & SUBSTITUTIONS
+                </h2>
+                <p className="text-[9px] text-slate-450 font-mono uppercase mt-0.5">Tactical briefing panel index slot</p>
+              </div>
+
+              <div className="bg-slate-900 border border-white/5 px-3 py-1.5 rounded-lg text-center font-mono text-xs">
+                <span>Score: <strong className="text-white font-black">{activeSimulation.homeScore} - {activeSimulation.awayScore}</strong></span>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[350px] overflow-y-auto">
+              <div className="space-y-3.5">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest block font-mono font-bold">Your Locker Room Strategy:</span>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  The referee blown the whistles. Your starting players are currently fatigued from 45 minutes of heavy play. Pick tactical substitutes inside the Office tab after ending simulation, or utilize your head coach guidelines.
+                </p>
+              </div>
+
+              <div className="bg-[#1c2230] border border-white/5 p-4 rounded-xl space-y-3">
+                <span className="text-[10px] text-[#f59e0b] block uppercase tracking-wider font-extrabold flex items-center gap-1">
+                  <Activity className="w-4 h-4 text-amber-500" />
+                  Half-Time Quick Substitution Notice
+                </span>
+                <p className="text-[11.5px] text-slate-400 leading-normal">
+                  You can click on the buttons below to have the assistant coach dynamically rotate tired players automatically for the 2nd half, keeping your tactical advantage high.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-5 bg-slate-900 border-t border-white/5 flex flex-col md:flex-row gap-3">
+              <button
+                onClick={() => {
+                  const h = allClubs.find(c => c.id === activeSimulation.homeClubId)!;
+                  runAssistantSubstitution(h);
+                  setIsHalftimeModalOpen(false);
+                  setIsPlaying(true);
+                  setSimMessage('Halftime substitutions deployed successfully! Commencing 2nd half.');
+                  setTimeout(() => setSimMessage(''), 3000);
+                }}
+                className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
+              >
+                Let Assistant Deploy Subs & Play
+              </button>
+              <button
+                onClick={() => {
+                  setIsHalftimeModalOpen(false);
+                  setIsPlaying(true);
+                }}
+                className="flex-1 py-2.5 bg-slate-850 hover:bg-slate-800 text-white border border-white/10 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
+              >
+                Continue Play without Adjustments
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. SEASON REVIEW AND CONTRACT PROLONGATION SCREEN */}
+      {isSeasonReviewOpen && (
+        <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-6 backdrop-blur-md animate-fadeIn text-left">
+          <div className="bg-[#121620] border border-white/10 w-full max-w-xl rounded-2xl overflow-hidden shadow-2xl relative p-6 space-y-6">
+            
+            <div className="text-center space-y-2">
+              <div className="w-16 h-16 bg-gradient-to-tr from-[#3b82f6] to-[#ea580c] rounded-2xl flex items-center justify-center border border-white/10 mx-auto">
+                <Award className="w-8 h-8 text-white animate-pulse" />
+              </div>
+              <h2 className="text-2xl font-black text-white uppercase tracking-tight">ANNUAL BOARD OF TRUSTEES EVALUATION</h2>
+              <p className="text-[10px] text-slate-550 tracking-widest font-mono uppercase">Season complete managers review panel</p>
+            </div>
+
+            <div className="bg-white/5 border border-white/5 p-4 rounded-xl space-y-4 text-xs">
+              <h3 className="text-[#38bdf8] font-bold block uppercase text-[10px] tracking-wider border-b border-white/5 pb-1 font-mono">
+                Historical Record & Operations Statistics
+              </h3>
+              
+              <div className="space-y-2.5">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Total Played matchweeks:</span>
+                  <strong className="text-white font-mono">19 Weeks Complete</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Final Table Points standing:</span>
+                  <strong className="text-emerald-400 font-mono">{currentActiveUserClub.points} Points Gained</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Current Club operations Cash:</span>
+                  <strong className="text-amber-500 font-mono">${userBalance.toLocaleString()}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Selection strategy choices */}
+            <div className="space-y-3.5">
+              <span className="text-[10px] text-slate-500 uppercase tracking-widest block font-mono font-bold">Pick Your Career Prolongation Path:</span>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <button
+                  onClick={() => handleSeasonResolution('stay')}
+                  className="bg-white/5 hover:bg-sky-500/10 border border-white/10 hover:border-sky-500 p-3.5 rounded-xl text-center transition-all cursor-pointer group"
+                >
+                  <span className="text-white group-hover:text-sky-400 text-xs font-black block uppercase tracking-tight">STAY IN CLUB</span>
+                  <span className="text-[8px] text-slate-400 block mt-1">Keep upgraded facilities, roster and operations cash balance.</span>
+                </button>
+
+                <button
+                  onClick={() => handleSeasonResolution('change')}
+                  className="bg-white/5 hover:bg-amber-500/10 border border-white/10 hover:border-amber-500 p-3.5 rounded-xl text-center transition-all cursor-pointer group"
+                >
+                  <span className="text-white group-hover:text-amber-400 text-xs font-black block uppercase tracking-tight">CHANGE CLUBS</span>
+                  <span className="text-[8px] text-slate-400 block mt-1">Transfer career points, start fresh season at random elite club.</span>
+                </button>
+
+                <button
+                  onClick={() => handleSeasonResolution('reset')}
+                  className="bg-white/5 hover:bg-rose-500/10 border border-white/10 hover:border-rose-500 p-3.5 rounded-xl text-center transition-all cursor-pointer group"
+                >
+                  <span className="text-white group-hover:text-rose-450 text-xs font-black block uppercase tracking-tight">HARD RESET SLOT</span>
+                  <span className="text-[8px] text-slate-400 block mt-1">Wipes all current stats, complete slot restart on defaults.</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

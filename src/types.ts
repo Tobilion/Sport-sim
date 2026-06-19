@@ -1,0 +1,205 @@
+export type TeamMentalityType = 'Tiki-Taka' | 'Gegenpressing' | 'Park the Bus' | 'Counter-Attack';
+
+export interface PlayerAttributes {
+  pace: number;
+  shooting: number;
+  passing: number;
+  dribbling: number;
+  defending: number;
+  physical: number;
+}
+
+export interface Player {
+  id: string;
+  name: string;
+  position: 'GK' | 'DEF' | 'MID' | 'ATT';
+  rating: number;
+  stamina: number; // 0 to 100
+  morale: number;  // 0 to 100
+  goals: number;
+  assists: number;
+  yellowCards: number;
+  redCards: number;
+  matchRatings: number[];
+  marketValue: number;
+  attributes: PlayerAttributes;
+  isStarting: boolean; // Managed by team sheet for lineups
+  saves?: number;
+  tournamentGoals?: number;
+  tournamentAssists?: number;
+  tournamentYellowCards?: number;
+  tournamentRedCards?: number;
+  tournamentSaves?: number;
+}
+
+export interface Coach {
+  name: string;
+  nationality: string;
+  specialty: 'Defending' | 'Attacking' | 'Youth' | 'Tactics' | 'Fitness' | 'Physio';
+  rating: number; // 70 to 95
+}
+
+export interface Club {
+  id: string;
+  name: string;
+  color: string;
+  secondaryColor: string;
+  squad: Player[];
+  mentality: TeamMentalityType;
+  trainingFacilities: number; // up to lvl 5 (Increases player stat growth)
+  tacticsFacilities: number;   // up to lvl 5 (Increases tactical pass modifier)
+  cardioFacilities: number;    // up to lvl 5 (Reduces stamina drain)
+  medicalFacilities: number;   // up to lvl 5 (Heals stamina after matches faster)
+  coach: Coach;
+  points: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  streak: ('W' | 'D' | 'L')[];
+}
+
+export interface MatchEvent {
+  tick: number;
+  minute: number;
+  type: 'goal' | 'shot_saved' | 'shot_miss' | 'foul' | 'yellow_card' | 'red_card' | 'tactical_shift' | 'stamina_warning' | 'info' | 'half_time' | 'full_time';
+  teamId?: string;
+  playerName?: string;
+  description: string;
+}
+
+export interface LiveMatchSimulation {
+  fixtureId: string;
+  homeClubId: string;
+  awayClubId: string;
+  homeScore: number;
+  awayScore: number;
+  tick: number; // 0 to 30 (15 per half)
+  isFinished: boolean;
+  possession: 'home' | 'away';
+  ballX: number; // 0 to 100 (0=home goal, 100=away goal)
+  ballY: number; // 0 to 100
+  zone: 'DEF' | 'MID' | 'ATT';
+  events: MatchEvent[];
+  homeShooters: string[];
+  awayShooters: string[];
+  // Stats
+  homeShots: number;
+  awayShots: number;
+  homeShotsOnTarget: number;
+  awayShotsOnTarget: number;
+  homePossessionScore: number; // accumulates to yield average possession percentage
+  awayPossessionScore: number;
+  homeConcededFouls: number;
+  awayConcededFouls: number;
+  isSpectating?: boolean;
+}
+
+export interface Fixture {
+  id: string;
+  week: number;
+  homeClubId: string;
+  awayClubId: string;
+  homeScore?: number;
+  awayScore?: number;
+  isCompleted: boolean;
+  homeGoalsDetail?: string[]; // scorer names
+  awayGoalsDetail?: string[];
+  homePossession?: number;
+  awayPossession?: number;
+  homeShots?: number;
+  awayShots?: number;
+  homeShotsOnTarget?: number;
+  awayShotsOnTarget?: number;
+}
+
+export interface BracketNode {
+  id: string; // e.g. 'R32-1', 'R16-1', 'QF-1', 'SF-1', 'F'
+  round: 'R32' | 'R16' | 'QF' | 'SF' | 'F';
+  roundIndex: number; // 0-based index for columns/layout
+  homeClubId?: string;
+  awayClubId?: string;
+  homeScore?: number;
+  awayScore?: number;
+  homePens?: number; // Shootout results
+  awayPens?: number;
+  isCompleted: boolean;
+  winnerClubId?: string;
+}
+
+export interface TransferPlayer {
+  id: string;
+  name: string;
+  position: 'GK' | 'DEF' | 'MID' | 'ATT';
+  rating: number;
+  stamina: number;
+  morale: number;
+  marketValue: number;
+  clubName: string; // From which club, or 'Free Agent'
+}
+
+export interface CampaignState {
+  currentCampaign: 'league' | 'cup';
+  userClubId: string;
+  userBalance: number;
+  leagueSettings: {
+    currentWeek: number;
+    fixtures: Fixture[];
+  };
+  cupSettings: {
+    bracket: BracketNode[];
+    currentRound: 'R32' | 'R16' | 'QF' | 'SF' | 'F';
+  };
+}
+
+export type BetType = '1X2_HOME' | '1X2_DRAW' | '1X2_AWAY' | 'OVER_2.5' | 'UNDER_2.5' | 'OVER_1.5' | 'UNDER_1.5' | 'BTTS_YES' | 'BTTS_NO' | 'DC_1X' | 'DC_X2' | 'DC_12';
+
+export interface BetSelection {
+  fixtureId: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  betType: BetType;
+  selectedLabel: string;
+  odds: number;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+}
+
+export interface BetTicket {
+  id: string;
+  selections: BetSelection[];
+  totalOdds: number;
+  stake: number;
+  potentialPayout: number;
+  cashoutValue: number;
+  isCashedOut: boolean;
+  status: 'PENDING' | 'WON' | 'LOST' | 'CASHED_OUT';
+  createdTime: number;
+}
+
+export interface LiveOdds {
+  homeWin: number;
+  draw: number;
+  awayWin: number;
+  over25: number;
+  under25: number;
+}
+
+export interface Tipster {
+  id: string;
+  name: string;
+  avatar: string;
+  speciality: string;
+  winStreak: number;
+  roi: number;
+  subscribers: number;
+  subPrice: number;
+  copiedCount: number;
+  weeklyTicket: BetSelection[];
+  weeklyTicketOdds: number;
+  isSubscribed: boolean;
+}
+
+

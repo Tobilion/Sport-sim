@@ -1,0 +1,6 @@
+{
+  "name": "SportSim Pro",
+  "description": "A state-of-the-art Football Club Management & Real-Time Sports Betting Simulation platform with dynamic odds, multi-bet engines, and granular tactics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

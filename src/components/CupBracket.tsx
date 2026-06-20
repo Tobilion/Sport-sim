@@ -15,7 +15,9 @@ export const CupBracket: React.FC<CupBracketProps> = ({
   currentRound,
   onTapClub
 }) => {
-  const [selectedRound, setSelectedRound] = useState<'R32' | 'R16' | 'QF' | 'SF' | 'F'>('R32');
+  const [selectedRound, setSelectedRound] = useState<'R32' | 'R16' | 'QF' | 'SF' | 'F'>(
+    (currentRound === 'Group' || currentRound === 'FINISHED') ? 'R16' : (currentRound as any) || 'R16'
+  );
 
   const getClub = (id?: string) => allClubs.find(c => c.id === id);
 

@@ -41,7 +41,8 @@ import {
   Fixture, 
   BracketNode, 
   LiveMatchSimulation, 
-  TeamMentalityType 
+  TeamMentalityType,
+  TrophyRecord
 } from './types';
 
 import { seedAllClubs, randRange, generatePlayerAttributes } from './data/names';
@@ -51,9 +52,13 @@ import { MatchCenter } from './components/MatchCenter';
 import { LeagueTable } from './components/LeagueTable';
 import { CupBracket } from './components/CupBracket';
 import { ManagerSuite } from './components/ManagerSuite';
+import { PlayerDossierModal } from './components/PlayerDossierModal';
+import { ClubDossierModal } from './components/ClubDossierModal';
+import { SeasonReviewModal } from './components/SeasonReviewModal';
 import { NextMatch } from './components/NextMatch';
 import { AnalyticsCenter } from './components/AnalyticsCenter';
 import { AllTeams } from './components/AllTeams';
+import { TrophiesCenter } from './components/TrophiesCenter';
 
 interface SaveSlot {
   id: string;
@@ -69,6 +74,7 @@ interface SaveSlot {
   currentCupRound: 'Group' | 'R16' | 'QF' | 'SF' | 'F' | 'FINISHED' | 'R32';
   createdTime: number;
   lastPlayed: number;
+  historyTrophies?: TrophyRecord[];
 }
 
 // Fixed constant for starting budget
@@ -294,7 +300,9 @@ export default function App() {
   const [tournamentFixtures, setTournamentFixtures] = useState<Fixture[]>(() => initialSlot?.tournamentFixtures || []);
   const [cupBracket, setCupBracket] = useState<BracketNode[]>(() => initialSlot?.cupBracket || []);
   const [currentCupRound, setCurrentCupRound] = useState<'Group' | 'R16' | 'QF' | 'SF' | 'F' | 'FINISHED'>(() => (initialSlot?.currentCupRound || 'Group') as any);
-  const [currentTabProgress, setCurrentTabProgress] = useState<'MANAGER' | 'NEXT_MATCH' | 'FIXTURES' | 'STANDINGS' | 'ANALYTICS' | 'ALL_TEAMS'>('MANAGER');
+  const [historyTrophies, setHistoryTrophies] = useState<TrophyRecord[]>(() => initialSlot?.historyTrophies || []);
+  const [currentTabProgress, setCurrentTabProgress] = useState<'MANAGER' | 'NEXT_MATCH' | 'FIXTURES' | 'STANDINGS' | 'ANALYTICS' | 'ALL_TEAMS' | 'TROPHIES'>('MANAGER');
+  const [fixturesActiveSubTab, setFixturesActiveSubTab] = useState<'LEAGUE' | 'TOURNAMENT'>('LEAGUE');
 
   // Dossier details modal anchors
   const [activePlayerDossierId, setActivePlayerDossierId] = useState<string | null>(null);
@@ -352,9 +360,17 @@ export default function App() {
         setTournamentFixtures(slot.tournamentFixtures || []);
         setCupBracket(slot.cupBracket);
         setCurrentCupRound(slot.currentCupRound as any);
+        setHistoryTrophies(slot.historyTrophies || []);
       }
     }
   }, [activeSlotId]);
+
+  // Sync fixturesActiveSubTab to currentWeek's type when currentWeek changes
+  useEffect(() => {
+    const weekInfo = DUAL_SCHEDULE.find(s => s.week === currentWeek);
+    const isLeagueMatch = weekInfo ? weekInfo.type === 'league' : true;
+    setFixturesActiveSubTab(isLeagueMatch ? 'LEAGUE' : 'TOURNAMENT');
+  }, [currentWeek]);
 
   // Update current active Slot state payload in memory & persist
   const saveCurrentSlotProgress = (
@@ -364,7 +380,8 @@ export default function App() {
     updatedWeek?: number,
     updatedRound?: 'Group' | 'R16' | 'QF' | 'SF' | 'F' | 'FINISHED' | 'R32',
     updatedBalance?: number,
-    updatedTournamentFixtures?: Fixture[]
+    updatedTournamentFixtures?: Fixture[],
+    updatedHistoryTrophies?: TrophyRecord[]
   ) => {
     if (!activeSlotId) return;
 
@@ -379,6 +396,7 @@ export default function App() {
           tournamentFixtures: updatedTournamentFixtures !== undefined ? updatedTournamentFixtures : (slot.tournamentFixtures || tournamentFixtures),
           cupBracket: updatedBracket !== undefined ? updatedBracket : cupBracket,
           currentCupRound: (updatedRound !== undefined ? updatedRound : currentCupRound) as any,
+          historyTrophies: updatedHistoryTrophies !== undefined ? updatedHistoryTrophies : historyTrophies,
           lastPlayed: Date.now()
         };
       }
@@ -713,7 +731,12 @@ export default function App() {
       updatedTournamentFixtures
     );
 
-    setActiveSimulation(null);
+    // If activeSimulation matches finalSim, don't clear it right away! 
+    // The user will close it via the MatchConcluded view.
+    // We update activeSimulation to have isFinished = true so MatchCenter renders the conclusion screen.
+    if (activeSimulation && activeSimulation.fixtureId === finalSim.fixtureId) {
+      setActiveSimulation({ ...finalSim, isFinished: true });
+    }
   };
 
   // Launch Live Match Broadcaster
@@ -745,10 +768,10 @@ export default function App() {
       awayPossessionScore: 50,
       homeConcededFouls: 0,
       awayConcededFouls: 0,
-      isSpectating: !!isSpectating
+      isSpectating: isSpectating || (homeId !== userClubId && awayId !== userClubId)
     });
 
-    setCurrentTabProgress('MATCHDAY');
+    setCurrentTabProgress('FIXTURES');
     setIsPlaying(true);
     setSimSpeed(2000); // Always default to Broadcast (90s) speed when watching a live match
   };
@@ -841,6 +864,17 @@ export default function App() {
     saveCurrentSlotProgress(updated);
   };
 
+  const handleFormationShift = (formation: TeamFormationType) => {
+    const updated = allClubs.map(club => {
+      if (club.id === userClubId) {
+        return { ...club, formation };
+      }
+      return club;
+    });
+    setAllClubs(updated);
+    saveCurrentSlotProgress(updated);
+  };
+
   const handleAddFunds = (amount: number) => {
     const nextBal = userBalance + amount;
     setUserBalance(nextBal);
@@ -891,8 +925,8 @@ export default function App() {
       fixtureId,
       homeClubId: homeId,
       awayClubId: awayId,
-      homeScore: fixtureObject.homeScore,
-      awayScore: fixtureObject.awayScore,
+      homeScore: fixtureObject.homeScore || 0,
+      awayScore: fixtureObject.awayScore || 0,
       tick: 30,
       isFinished: true,
       possession: 'home',
@@ -902,14 +936,14 @@ export default function App() {
       events: [
         { tick: 30, minute: 90, type: 'info', description: `Quick match simulation settled successfully.` }
       ],
-      homeShooters: Array(fixtureObject.homeScore).fill('Assigned Scorer'),
-      awayShooters: Array(fixtureObject.awayScore).fill('Assigned Scorer'),
-      homeShots: randRange(8, 14),
-      awayShots: randRange(8, 14),
-      homeShotsOnTarget: randRange(3, 7),
-      awayShotsOnTarget: randRange(3, 7),
-      homePossessionScore: 50,
-      awayPossessionScore: 50,
+      homeShooters: fixtureObject.homeGoalsDetail || Array(fixtureObject.homeScore || 0).fill(''),
+      awayShooters: fixtureObject.awayGoalsDetail || Array(fixtureObject.awayScore || 0).fill(''),
+      homeShots: fixtureObject.homeShots || 0,
+      awayShots: fixtureObject.awayShots || 0,
+      homeShotsOnTarget: fixtureObject.homeShotsOnTarget || 0,
+      awayShotsOnTarget: fixtureObject.awayShotsOnTarget || 0,
+      homePossessionScore: fixtureObject.homePossession || 50,
+      awayPossessionScore: fixtureObject.awayPossession || 50,
       homeConcededFouls: randRange(3, 8),
       awayConcededFouls: randRange(3, 8),
       isSpectating: false
@@ -941,6 +975,14 @@ export default function App() {
         target.homeScore = game.homeScore;
         target.awayScore = game.awayScore;
         target.isCompleted = true;
+        target.homeGoalsDetail = game.homeGoalsDetail;
+        target.awayGoalsDetail = game.awayGoalsDetail;
+        target.homePossession = game.homePossession;
+        target.awayPossession = game.awayPossession;
+        target.homeShots = game.homeShots;
+        target.awayShots = game.awayShots;
+        target.homeShotsOnTarget = game.homeShotsOnTarget;
+        target.awayShotsOnTarget = game.awayShotsOnTarget;
 
         const hC = updatedClubs.find(c => c.id === fix.homeClubId)!;
         const aC = updatedClubs.find(c => c.id === fix.awayClubId)!;
@@ -975,6 +1017,14 @@ export default function App() {
         target.homeScore = game.homeScore;
         target.awayScore = game.awayScore;
         target.isCompleted = true;
+        target.homeGoalsDetail = game.homeGoalsDetail;
+        target.awayGoalsDetail = game.awayGoalsDetail;
+        target.homePossession = game.homePossession;
+        target.awayPossession = game.awayPossession;
+        target.homeShots = game.homeShots;
+        target.awayShots = game.awayShots;
+        target.homeShotsOnTarget = game.homeShotsOnTarget;
+        target.awayShotsOnTarget = game.awayShotsOnTarget;
       });
 
       if (currentWeek === 9) {
@@ -1006,6 +1056,14 @@ export default function App() {
         node.homeScore = game.homeScore;
         node.awayScore = game.awayScore;
         node.isCompleted = true;
+        node.homeGoalsDetail = game.homeGoalsDetail;
+        node.awayGoalsDetail = game.awayGoalsDetail;
+        node.homePossession = game.homePossession;
+        node.awayPossession = game.awayPossession;
+        node.homeShots = game.homeShots;
+        node.awayShots = game.awayShots;
+        node.homeShotsOnTarget = game.homeShotsOnTarget;
+        node.awayShotsOnTarget = game.awayShotsOnTarget;
 
         if (game.homeScore > game.awayScore) {
           node.winnerClubId = hId;
@@ -1142,10 +1200,14 @@ export default function App() {
         match.isCompleted = true;
         match.homeScore = res.homeScore;
         match.awayScore = res.awayScore;
-        match.homePossession = randRange(41, 59);
-        match.awayPossession = 100 - match.homePossession;
-        match.homeShots = randRange(5, 14);
-        match.awayShots = randRange(5, 14);
+        match.homePossession = res.homePossession;
+        match.awayPossession = res.awayPossession;
+        match.homeShots = res.homeShots;
+        match.awayShots = res.awayShots;
+        match.homeShotsOnTarget = res.homeShotsOnTarget;
+        match.awayShotsOnTarget = res.awayShotsOnTarget;
+        match.homeGoalsDetail = res.homeGoalsDetail;
+        match.awayGoalsDetail = res.awayGoalsDetail;
 
         hClub.played++;
         aClub.played++;
@@ -1179,10 +1241,14 @@ export default function App() {
             match.isCompleted = true;
             match.homeScore = res.homeScore;
             match.awayScore = res.awayScore;
-            match.homePossession = randRange(41, 59);
-            match.awayPossession = 100 - match.homePossession;
-            match.homeShots = randRange(5, 14);
-            match.awayShots = randRange(5, 14);
+            match.homePossession = res.homePossession;
+            match.awayPossession = res.awayPossession;
+            match.homeShots = res.homeShots;
+            match.awayShots = res.awayShots;
+            match.homeShotsOnTarget = res.homeShotsOnTarget;
+            match.awayShotsOnTarget = res.awayShotsOnTarget;
+            match.homeGoalsDetail = res.homeGoalsDetail;
+            match.awayGoalsDetail = res.awayGoalsDetail;
 
             hClub.played++;
             aClub.played++;
@@ -1216,21 +1282,14 @@ export default function App() {
               match.isCompleted = true;
               match.homeScore = res.homeScore;
               match.awayScore = res.awayScore;
-              match.homePossession = randRange(42, 58);
-              match.awayPossession = 100 - match.homePossession;
-              match.homeShots = randRange(4, 15);
-              match.awayShots = randRange(4, 15);
-
-              const homeAtt = mHome.squad.filter(p => p.position === 'ATT').concat(mHome.squad.filter(p => p.position === 'MID'));
-              const awayAtt = mAway.squad.filter(p => p.position === 'ATT').concat(mAway.squad.filter(p => p.position === 'MID'));
-              if (res.homeScore > 0 && homeAtt.length) {
-                const sc = homeAtt[randRange(0, homeAtt.length - 1)];
-                sc.tournamentGoals = (sc.tournamentGoals || 0) + res.homeScore;
-              }
-              if (res.awayScore > 0 && awayAtt.length) {
-                const sc = awayAtt[randRange(0, awayAtt.length - 1)];
-                sc.tournamentGoals = (sc.tournamentGoals || 0) + res.awayScore;
-              }
+              match.homePossession = res.homePossession;
+              match.awayPossession = res.awayPossession;
+              match.homeShots = res.homeShots;
+              match.awayShots = res.awayShots;
+              match.homeShotsOnTarget = res.homeShotsOnTarget;
+              match.awayShotsOnTarget = res.awayShotsOnTarget;
+              match.homeGoalsDetail = res.homeGoalsDetail;
+              match.awayGoalsDetail = res.awayGoalsDetail;
             });
 
             if (currentWeek === 9) {
@@ -1365,59 +1424,138 @@ export default function App() {
   const dossierPlayer = getDossierPlayerModel();
   const dossierClub = getDossierClubModel();
 
+  // Helper inside the component body to capture the end-of-season trophy winners
+  const captureSeasonTrophies = (clubsList: Club[], bracketList: BracketNode[]): TrophyRecord => {
+    // 1. League winner
+    const leagueClubs = [...clubsList].slice(0, 20);
+    leagueClubs.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+      return b.goalsFor - a.goalsFor;
+    });
+    const lWinner = leagueClubs[0];
+
+    // 2. Tournament winner
+    const fbF = bracketList.find(b => b.id === 'F-1' || b.round === 'F');
+    const tWinnerId = fbF?.winnerClubId;
+    const tWinner = clubsList.find(c => c.id === tWinnerId) || clubsList[2]; // fallback to a good club
+
+    // 3. Golden Boot
+    let topScorer: Player | null = null;
+    let topScorerClubName = '';
+    let maxGoals = -1;
+
+    // 4. Golden Glove
+    let topGK: Player | null = null;
+    let topGKClubName = '';
+    let maxSaves = -1;
+
+    clubsList.forEach(cl => {
+      cl.squad.forEach(pl => {
+        const totalGoals = (pl.goals || 0) + (pl.tournamentGoals || 0);
+        if (totalGoals > maxGoals) {
+          maxGoals = totalGoals;
+          topScorer = pl;
+          topScorerClubName = cl.name;
+        }
+
+        const totalSaves = (pl.saves || 0) + (pl.tournamentSaves || 0);
+        if (totalSaves > maxSaves) {
+          maxSaves = totalSaves;
+          topGK = pl;
+          topGKClubName = cl.name;
+        }
+      });
+    });
+
+    const currentSeasonNum = historyTrophies.length + 1;
+
+    return {
+      season: currentSeasonNum,
+      leagueWinner: lWinner ? lWinner.name : 'Unknown Club',
+      leagueWinnerColor: lWinner ? lWinner.color : '#3abdf8',
+      tournamentWinner: tWinner ? tWinner.name : 'Unknown Club',
+      tournamentWinnerColor: tWinner ? tWinner.color : '#facc15',
+      goldenBootName: topScorer ? (topScorer as Player).name : 'No Goalscorer',
+      goldenBootClub: topScorerClubName || 'Unknown Club',
+      goldenBootGoals: maxGoals > 0 ? maxGoals : 0,
+      goldenGloveName: topGK ? (topGK as Player).name : 'No Goalkeeper',
+      goldenGloveClub: topGKClubName || 'Unknown Club',
+      goldenGloveSaves: maxSaves > 0 ? maxSaves : 0,
+    };
+  };
+
   // End of Season Choices handler
   const handleSeasonResolution = (choice: 'stay' | 'change' | 'reset') => {
     setIsSeasonReviewOpen(false);
 
-    if (choice === 'stay') {
-      // Keeps facility level and cash operations budget, but regenerates fresh week cycles!
-      const teamIds = allClubs.map(c => c.id);
-      const leagueClubs = teamIds.slice(0, 20);
-      const cupClubs = teamIds.slice(20, 36);
+    if (choice === 'stay' || choice === 'change') {
+      // 1. Capture the final trophies achieved during this campaign year
+      const newTrophy = captureSeasonTrophies(allClubs, cupBracket);
+      const nextTrophies = [...historyTrophies, newTrophy];
+      setHistoryTrophies(nextTrophies);
 
-      const resetFixtures = generateLeagueFixtures20(leagueClubs);
-      const resetBracket = generateCupBracket16FromGroups([]);
+      // 2. Select next manager seat (optionally transfer operation base)
+      let nextActiveUserClubId = userClubId;
+      let feedbackMsg = 'Contract Prolonged! Stayed in first seat of the club for another year.';
+      
+      if (choice === 'change') {
+        const availableClubs = allClubs.filter(c => c.id !== userClubId).slice(0, 8);
+        const nextClub = availableClubs[randRange(0, availableClubs.length - 1)] || allClubs[2];
+        nextActiveUserClubId = nextClub.id;
+        setUserClubId(nextClub.id);
+        feedbackMsg = `Job Accepted! Transferred to direct operations at ${nextClub.name}!`;
+      }
 
-      // Clean stats points for fresh campaign years
+      // 3. Clean statistics records and individual player records across all clubs
       const resetStatsClubs = allClubs.map(c => ({
         ...c,
-        played: 0, won: 0, drawn: 0, lost: 0, points: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, streak: []
+        played: 0, won: 0, drawn: 0, lost: 0, points: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, streak: [],
+        squad: c.squad.map(p => ({
+          ...p,
+          stamina: 100,
+          goals: 0,
+          assists: 0,
+          saves: 0,
+          yellowCards: 0,
+          redCards: 0,
+          matchRatings: [],
+          tournamentGoals: 0,
+          tournamentAssists: 0,
+          tournamentSaves: 0,
+          tournamentYellowCards: 0,
+          tournamentRedCards: 0
+        }))
       }));
 
-      setAllClubs(resetStatsClubs);
-      setLeagueFixtures(resetFixtures);
-      setCupBracket(resetBracket);
-      setCurrentWeek(1);
-      setCurrentCupRound('R16');
-
-      saveCurrentSlotProgress(resetStatsClubs, resetFixtures, resetBracket, 1, 'R16', userBalance);
-      setSimMessage('Contract Prolonged! Stayed in first seat of the club for another year.');
-    } else if (choice === 'change') {
-      // Pick a random other club from SuperLeague to manage!
-      const availableClubs = allClubs.filter(c => c.id !== userClubId).slice(0, 8);
-      const nextClub = availableClubs[randRange(0, availableClubs.length - 1)] || allClubs[2];
-      setUserClubId(nextClub.id);
-
-      const teamIds = allClubs.map(c => c.id);
+      // 4. Regenerate entirely fresh weekly rosters
+      const teamIds = resetStatsClubs.map(c => c.id);
       const leagueClubs = teamIds.slice(0, 20);
-      const cupClubs = teamIds.slice(20, 36);
 
       const resetFixtures = generateLeagueFixtures20(leagueClubs);
-      const resetBracket = generateCupBracket16FromGroups([]);
+      const resetTournamentFixtures = generateTournamentGroupFixtures(resetStatsClubs);
+      const resetBracket: BracketNode[] = [];
 
-      const resetStatsClubs = allClubs.map(c => ({
-        ...c,
-        played: 0, won: 0, drawn: 0, lost: 0, points: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, streak: []
-      }));
-
+      // 5. Update state parameters
       setAllClubs(resetStatsClubs);
       setLeagueFixtures(resetFixtures);
+      setTournamentFixtures(resetTournamentFixtures);
       setCupBracket(resetBracket);
       setCurrentWeek(1);
-      setCurrentCupRound('R16');
+      setCurrentCupRound('Group');
 
-      saveCurrentSlotProgress(resetStatsClubs, resetFixtures, resetBracket, 1, 'R16', userBalance);
-      setSimMessage(`Job Accepted! Transferred to direct operations at ${nextClub.name}!`);
+      // 6. Save slots
+      saveCurrentSlotProgress(
+        resetStatsClubs, 
+        resetFixtures, 
+        resetBracket, 
+        1, 
+        'Group', 
+        userBalance, 
+        resetTournamentFixtures, 
+        nextTrophies
+      );
+      setSimMessage(feedbackMsg);
     } else {
       handleHardReset();
     }
@@ -1581,9 +1719,10 @@ export default function App() {
               { id: 'MANAGER' as const, label: 'Manager Suite', icon: Briefcase },
               { id: 'NEXT_MATCH' as const, label: 'Next Match', icon: Zap, notify: activeSimulation ? 'LIVE' : undefined },
               { id: 'FIXTURES' as const, label: 'Fixtures', icon: Calendar },
-              { id: 'STANDINGS' as const, label: 'Standings', icon: Trophy },
+              { id: 'STANDINGS' as const, label: 'Standings', icon: Award },
               { id: 'ANALYTICS' as const, label: 'Analytics', icon: BarChart3 },
-              { id: 'ALL_TEAMS' as const, label: 'All Teams', icon: Globe }
+              { id: 'ALL_TEAMS' as const, label: 'All Teams', icon: Globe },
+              { id: 'TROPHIES' as const, label: 'Cabinet/Trophies', icon: Trophy }
             ].map(item => {
               const Icon = item.icon;
               const isSelected = currentTabProgress === item.id;
@@ -1705,6 +1844,8 @@ export default function App() {
               onAdjustSquadLineup={handleAdjustSquadLineup}
               onAddFunds={handleAddFunds}
               onTapPlayer={handleOpenPlayerDossier}
+              onChangeUserMentality={handleTacticalShift}
+              onChangeUserFormation={handleFormationShift}
             />
           )}
 
@@ -1761,6 +1902,8 @@ export default function App() {
                     userClubId={userClubId}
                     onTapPlayer={handleOpenPlayerDossier}
                     onTapClub={handleOpenClubDossier}
+                    onAdjustSquadLineup={handleAdjustSquadLineup}
+                    onCloseMatch={() => setActiveSimulation(null)}
                   />
                 </div>
               ) : (
@@ -1784,6 +1927,31 @@ export default function App() {
                     </div>
                   </div>
 
+                  {campaignType === 'dual' && (
+                    <div className="flex gap-2 p-1 bg-slate-950/80 border border-white/5 rounded-xl w-fit">
+                      <button
+                        onClick={() => setFixturesActiveSubTab('LEAGUE')}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                          fixturesActiveSubTab === 'LEAGUE'
+                            ? 'bg-sky-500 text-black shadow font-extrabold'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        League Matchdays
+                      </button>
+                      <button
+                        onClick={() => setFixturesActiveSubTab('TOURNAMENT')}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                          fixturesActiveSubTab === 'TOURNAMENT'
+                            ? 'bg-amber-500 text-black shadow font-extrabold'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        Prestige Cup
+                      </button>
+                    </div>
+                  )}
+
                   {activeMatchesToPlay.length === 0 ? (
                     <div className="p-8 text-center space-y-4">
                       <div className="py-5 bg-black/40 border border-emerald-500/20 text-emerald-400 rounded-xl text-xs font-black uppercase flex flex-col items-center justify-center gap-2">
@@ -1798,6 +1966,98 @@ export default function App() {
                         Advance to Week {currentWeek + 1}
                       </button>
                     </div>
+                  ) : campaignType === 'dual' && fixturesActiveSubTab === 'LEAGUE' && !(DUAL_SCHEDULE.find(s => s.week === currentWeek)?.type === 'league') ? (
+                    (() => {
+                      let nextLgMatch = leagueFixtures?.find(f => !f.isCompleted && (f.homeClubId === currentActiveUserClub?.id || f.awayClubId === currentActiveUserClub?.id));
+                      let nextLgOpponentName = '';
+                      let nextLgWeek = '';
+                      if (nextLgMatch) {
+                         const oppId = nextLgMatch.homeClubId === currentActiveUserClub?.id ? nextLgMatch.awayClubId : nextLgMatch.homeClubId;
+                         const opp = allClubs.find(c => c.id === oppId);
+                         nextLgOpponentName = opp?.name || 'Unknown';
+                         nextLgWeek = `Week ${nextLgMatch.week}`;
+                      }
+                      return (
+                        <div className="bg-[#121620] border border-white/5 rounded-2xl p-8 text-center max-w-lg mx-auto space-y-4">
+                          <div className="w-12 h-12 bg-sky-500/10 text-sky-400 rounded-xl flex items-center justify-center mx-auto border border-sky-400/20">
+                            <Calendar className="w-6 h-6" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <h3 className="text-sm font-black text-white uppercase tracking-wider">No League Fixtures Scheduled</h3>
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                              Week {currentWeek} is designated for the <strong>Prestige Champions Cup</strong> tournament stage.
+                            </p>
+
+                            {nextLgMatch ? (
+                              <div className="my-4 bg-sky-500/10 border border-sky-500/20 p-4 rounded-xl text-left inline-block min-w-48">
+                                <span className="text-[10px] text-sky-400 font-mono uppercase font-black block mb-1 tracking-widest">Next League Match:</span>
+                                <div className="text-white text-sm font-black uppercase tracking-tight">vs {nextLgOpponentName}</div>
+                                <div className="text-xs text-slate-400 mt-1">Scheduled for <strong className="text-white">{nextLgWeek}</strong></div>
+                              </div>
+                            ) : (
+                              <div className="my-4 text-xs text-slate-500 bg-white/5 p-3 rounded-xl border border-white/10 uppercase tracking-widest font-mono font-bold">
+                                No Upcoming League Matches
+                              </div>
+                            )}
+
+                            <p className="text-xs text-slate-400 mt-4 block">
+                              Select the <strong className="text-amber-400">Prestige Cup</strong> sub-tab above to play tournament fixtures of the week!
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })()
+                  ) : campaignType === 'dual' && fixturesActiveSubTab === 'TOURNAMENT' && (DUAL_SCHEDULE.find(s => s.week === currentWeek)?.type === 'league') ? (
+                    (() => {
+                      let nextCupMatch = tournamentFixtures?.find(f => !f.isCompleted && (f.homeClubId === currentActiveUserClub?.id || f.awayClubId === currentActiveUserClub?.id));
+                      let nextKnockoutMatch = cupBracket?.find(n => !n.isCompleted && (n.homeClubId === currentActiveUserClub?.id || n.awayClubId === currentActiveUserClub?.id));
+                      let combinedNext = nextCupMatch || nextKnockoutMatch;
+                      
+                      let nextCupOpponentName = '';
+                      let nextCupWeek = '';
+                      if (combinedNext) {
+                         const oppId = combinedNext.homeClubId === currentActiveUserClub?.id ? combinedNext.awayClubId : combinedNext.homeClubId;
+                         const opp = allClubs.find(c => c.id === oppId);
+                         nextCupOpponentName = opp?.name || 'TBD (Awaiting Draw)';
+                         
+                         if ('week' in combinedNext) {
+                            nextCupWeek = `Week ${(combinedNext as Fixture).week}`;
+                         } else {
+                            const schedInfo = DUAL_SCHEDULE.find(s => s.stage === (combinedNext as BracketNode).round);
+                            nextCupWeek = schedInfo ? `Week ${schedInfo.week}` : 'TBD';
+                         }
+                      }
+
+                      return (
+                        <div className="bg-[#121620] border border-white/5 rounded-2xl p-8 text-center max-w-lg mx-auto space-y-4">
+                          <div className="w-12 h-12 bg-amber-500/10 text-amber-400 rounded-xl flex items-center justify-center mx-auto border border-amber-400/20">
+                            <Award className="w-6 h-6 animate-pulse" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <h3 className="text-sm font-black text-white uppercase tracking-wider">No Prestige Cup Fixtures Scheduled</h3>
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                              Week {currentWeek} is designated for local <strong>Elite SuperLeague</strong> league matches.
+                            </p>
+
+                            {combinedNext ? (
+                              <div className="my-4 bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-left inline-block min-w-48">
+                                <span className="text-[10px] text-amber-500 font-mono uppercase font-black block mb-1 tracking-widest">Next Cup Match:</span>
+                                <div className="text-white text-sm font-black uppercase tracking-tight">vs {nextCupOpponentName}</div>
+                                <div className="text-xs text-slate-400 mt-1">Scheduled for <strong className="text-white">{nextCupWeek}</strong></div>
+                              </div>
+                            ) : (
+                              <div className="my-4 text-xs text-slate-500 bg-white/5 p-3 rounded-xl border border-white/10 uppercase tracking-widest font-mono font-bold">
+                                No Upcoming Cup Matches Remaining or knocked out
+                              </div>
+                            )}
+
+                            <p className="text-xs text-slate-400 mt-4 block">
+                              Select the <strong className="text-sky-400">League Matchdays</strong> sub-tab above to play league fixtures of the week!
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()
                   ) : (
                     <div className="space-y-4">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-slate-900/[0.45] border border-white/5 p-4 rounded-2xl">
@@ -1932,169 +2192,29 @@ export default function App() {
             />
           )}
 
+          {currentTabProgress === 'TROPHIES' && (
+            <TrophiesCenter historyTrophies={historyTrophies} />
+          )}
+
         </main>
       </div>
 
       {/* 3. DOSSIER DIALOG PORTALS (UNIVERSAL LINK POPUP) */}
       {dossierPlayer && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#121620] border border-white/10 w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative text-left">
-            
-            {/* Header layout */}
-            <div className="p-5 border-b border-white/5 relative bg-gradient-to-r from-sky-500/10 to-transparent">
-              <span className={`absolute top-4 right-4 px-2 py-0.5 rounded font-mono font-black text-[9px] uppercase tracking-wider ${
-                dossierPlayer.position === 'GK' ? 'bg-orange-500/20 text-orange-400' :
-                dossierPlayer.position === 'DEF' ? 'bg-sky-500/20 text-sky-400' :
-                dossierPlayer.position === 'MID' ? 'bg-emerald-500/20 text-emerald-400' :
-                'bg-rose-500/20 text-rose-455'
-              }`}>
-                {dossierPlayer.position} Role
-              </span>
-
-              <h2 className="text-lg font-black text-white">{dossierPlayer.name}</h2>
-              <p className="text-[9px] font-mono text-slate-500 uppercase mt-1">Player Profile Registry Dossier System</p>
-            </div>
-
-            {/* Dossier Tabs */}
-            <div className="flex bg-slate-900 border-b border-white/5">
-              <button
-                onClick={() => setDossierTypeTab('STATS')}
-                className={`flex-1 py-2 text-xs uppercase font-extrabold tracking-wider border-b-2 transition-all ${
-                  dossierTypeTab === 'STATS' ? 'border-sky-500 text-sky-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Season Metrics Stats
-              </button>
-              <button
-                onClick={() => setDossierTypeTab('QUALITIES')}
-                className={`flex-1 py-2 text-xs uppercase font-extrabold tracking-wider border-b-2 transition-all ${
-                  dossierTypeTab === 'QUALITIES' ? 'border-sky-500 text-sky-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Technical Qualities
-              </button>
-            </div>
-
-            {/* Dossier Tab Content */}
-            <div className="p-5 space-y-4">
-              {dossierTypeTab === 'STATS' ? (
-                <div className="space-y-3 text-xs">
-                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
-                    <span className="text-slate-500">Global OVR Quality index:</span>
-                    <strong className="text-white text-sm bg-slate-800 px-2 py-0.5 rounded">{dossierPlayer.rating} Rating</strong>
-                  </div>
-                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
-                    <span className="text-slate-500">Goals Scored this Season:</span>
-                    <strong className="text-emerald-400 text-sm">{dossierPlayer.goals} G</strong>
-                  </div>
-                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
-                    <span className="text-slate-500">Assists Contributed:</span>
-                    <strong className="text-sky-455 text-sm">{dossierPlayer.assists} A</strong>
-                  </div>
-                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
-                    <span className="text-slate-500">Yellow / Red Card Warnings:</span>
-                    <span className="flex items-center gap-1.5 text-slate-200 font-extrabold">
-                      <span className="bg-amber-400 w-3 h-4 rounded-sm inline-block"></span> {dossierPlayer.yellowCards}
-                      <span className="bg-red-500 w-3 h-4 rounded-sm inline-block"></span> {dossierPlayer.redCards}
-                    </span>
-                  </div>
-                  <div className="flex justify-between font-mono py-1 border-b border-white/5">
-                    <span className="text-slate-500">Stamina Conditioning:</span>
-                    <strong className="text-[#22c55e]">{Math.round(dossierPlayer.stamina)}% Fit</strong>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 text-xs font-mono">
-                  {Object.entries(dossierPlayer.attributes || {}).map(([key, value]) => (
-                    <div key={key}>
-                      <div className="flex justify-between text-[11px] mb-1 capitalize text-slate-400">
-                        <span>{key} index rating:</span>
-                        <span className="text-white font-extrabold">{value}</span>
-                      </div>
-                      <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
-                        <div className="h-full bg-sky-500" style={{ width: `${value}%` }}></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 bg-slate-900/80 border-t border-white/5 text-center">
-              <button
-                onClick={() => setActivePlayerDossierId(null)}
-                className="w-full py-2 bg-sky-500 hover:bg-sky-400 text-black text-xs font-black uppercase tracking-widest rounded-xl hover:scale-[1.01] transition-all cursor-pointer"
-              >
-                Close Profile Folder
-              </button>
-            </div>
-          </div>
-        </div>
+        <PlayerDossierModal 
+          player={dossierPlayer} 
+          onClose={() => setActivePlayerDossierId(null)} 
+        />
       )}
 
       {dossierClub && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#121620] border border-white/10 w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl relative text-left">
-            
-            {/* Header info */}
-            <div className="p-5 border-b border-white/5 relative" style={{ background: `linear-gradient(135deg, ${dossierClub.color}25, transparent)` }}>
-              <h2 className="text-lg font-black text-white uppercase flex items-center gap-2">
-                <span className="w-3.5 h-3.5 rounded-full inline-block" style={{ backgroundColor: dossierClub.color }}></span>
-                {dossierClub.name} Profile
-              </h2>
-              <p className="text-[9px] font-mono text-slate-500 uppercase mt-1">Club Management & Tactical Registry</p>
-            </div>
-
-            <div className="p-5 space-y-4 max-h-[380px] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div className="bg-[#1c2230] p-3 rounded-xl border border-white/5">
-                  <span className="text-slate-500 font-bold block uppercase text-[8px] font-mono mb-1">Assigned Head Coach</span>
-                  <span className="text-white font-extrabold block text-sm">{dossierClub.coach.name}</span>
-                  <span className="text-[9px] text-[#94a3b8] block mt-0.5">{dossierClub.coach.nationality} ({dossierClub.coach.specialty} coach)</span>
-                </div>
-                <div className="bg-[#1c2230] p-3 rounded-xl border border-white/5">
-                  <span className="text-slate-500 font-bold block uppercase text-[8px] font-mono mb-1">Club Mentality Style</span>
-                  <span className="text-amber-500 font-extrabold block text-sm">{dossierClub.mentality}</span>
-                </div>
-              </div>
-
-              {/* Club Squad Table linking inside */}
-              <div className="space-y-2">
-                <span className="text-[9px] font-mono text-slate-450 uppercase font-black tracking-widest block border-b border-white/5 pb-1">
-                  TACTICAL ROSTER SQUAD
-                </span>
-                
-                <div className="divide-y divide-white/5 text-xs">
-                  {dossierClub.squad.map((player) => (
-                    <div 
-                      key={player.id}
-                      onClick={() => handleOpenPlayerDossier(player.id)}
-                      className="py-2.5 flex justify-between items-center hover:bg-white/5 px-1 rounded-md transition-all cursor-pointer group"
-                    >
-                      <div className="flex flex-col">
-                        <span className="font-bold text-white group-hover:text-sky-400 hover:underline">{player.name}</span>
-                        <span className="text-[8px] text-slate-500 font-mono">ID: #{player.id.substring(player.id.lastIndexOf('-') + 1)}</span>
-                      </div>
-                      <div className="flex gap-2.5 items-center">
-                        <span className="px-1 text-[8px] font-black uppercase tracking-wider rounded bg-white/5 text-slate-450">{player.position}</span>
-                        <span className="font-mono font-black text-emerald-400 bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">{player.rating}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-900/80 border-t border-white/5 text-center">
-              <button
-                onClick={() => setActiveClubDossierId(null)}
-                className="w-full py-2 bg-sky-500 hover:bg-sky-400 text-black text-xs font-black uppercase tracking-widest rounded-xl hover:scale-[1.01] transition-all cursor-pointer"
-              >
-                Close Club Profile
-              </button>
-            </div>
-          </div>
-        </div>
+        <ClubDossierModal 
+          club={dossierClub} 
+          leagueFixtures={leagueFixtures}
+          tournamentFixtures={tournamentFixtures}
+          onClose={() => setActiveClubDossierId(null)} 
+          onOpenPlayerDossier={handleOpenPlayerDossier}
+        />
       )}
 
       {/* 4. HALFTIME COACHING BOARD MODAL */}
@@ -2157,6 +2277,15 @@ export default function App() {
               >
                 Continue Play without Adjustments
               </button>
+              <button
+                onClick={() => {
+                  setIsHalftimeModalOpen(false);
+                  setIsPlaying(false);
+                }}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
+              >
+                Make Subs Myself (Live Tactics)
+              </button>
             </div>
           </div>
         </div>
@@ -2164,71 +2293,11 @@ export default function App() {
 
       {/* 5. SEASON REVIEW AND CONTRACT PROLONGATION SCREEN */}
       {isSeasonReviewOpen && (
-        <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-6 backdrop-blur-md animate-fadeIn text-left">
-          <div className="bg-[#121620] border border-white/10 w-full max-w-xl rounded-2xl overflow-hidden shadow-2xl relative p-6 space-y-6">
-            
-            <div className="text-center space-y-2">
-              <div className="w-16 h-16 bg-gradient-to-tr from-[#3b82f6] to-[#ea580c] rounded-2xl flex items-center justify-center border border-white/10 mx-auto">
-                <Award className="w-8 h-8 text-white animate-pulse" />
-              </div>
-              <h2 className="text-2xl font-black text-white uppercase tracking-tight">ANNUAL BOARD OF TRUSTEES EVALUATION</h2>
-              <p className="text-[10px] text-slate-550 tracking-widest font-mono uppercase">Season complete managers review panel</p>
-            </div>
-
-            <div className="bg-white/5 border border-white/5 p-4 rounded-xl space-y-4 text-xs">
-              <h3 className="text-[#38bdf8] font-bold block uppercase text-[10px] tracking-wider border-b border-white/5 pb-1 font-mono">
-                Historical Record & Operations Statistics
-              </h3>
-              
-              <div className="space-y-2.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Total Played matchweeks:</span>
-                  <strong className="text-white font-mono">19 Weeks Complete</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Final Table Points standing:</span>
-                  <strong className="text-emerald-400 font-mono">{currentActiveUserClub.points} Points Gained</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Current Club operations Cash:</span>
-                  <strong className="text-amber-500 font-mono">${userBalance.toLocaleString()}</strong>
-                </div>
-              </div>
-            </div>
-
-            {/* Selection strategy choices */}
-            <div className="space-y-3.5">
-              <span className="text-[10px] text-slate-500 uppercase tracking-widest block font-mono font-bold">Pick Your Career Prolongation Path:</span>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <button
-                  onClick={() => handleSeasonResolution('stay')}
-                  className="bg-white/5 hover:bg-sky-500/10 border border-white/10 hover:border-sky-500 p-3.5 rounded-xl text-center transition-all cursor-pointer group"
-                >
-                  <span className="text-white group-hover:text-sky-400 text-xs font-black block uppercase tracking-tight">STAY IN CLUB</span>
-                  <span className="text-[8px] text-slate-400 block mt-1">Keep upgraded facilities, roster and operations cash balance.</span>
-                </button>
-
-                <button
-                  onClick={() => handleSeasonResolution('change')}
-                  className="bg-white/5 hover:bg-amber-500/10 border border-white/10 hover:border-amber-500 p-3.5 rounded-xl text-center transition-all cursor-pointer group"
-                >
-                  <span className="text-white group-hover:text-amber-400 text-xs font-black block uppercase tracking-tight">CHANGE CLUBS</span>
-                  <span className="text-[8px] text-slate-400 block mt-1">Transfer career points, start fresh season at random elite club.</span>
-                </button>
-
-                <button
-                  onClick={() => handleSeasonResolution('reset')}
-                  className="bg-white/5 hover:bg-rose-500/10 border border-white/10 hover:border-rose-500 p-3.5 rounded-xl text-center transition-all cursor-pointer group"
-                >
-                  <span className="text-white group-hover:text-rose-450 text-xs font-black block uppercase tracking-tight">HARD RESET SLOT</span>
-                  <span className="text-[8px] text-slate-400 block mt-1">Wipes all current stats, complete slot restart on defaults.</span>
-                </button>
-              </div>
-            </div>
-
-          </div>
-        </div>
+        <SeasonReviewModal
+          userClub={currentActiveUserClub!}
+          balance={userBalance}
+          onResolve={handleSeasonResolution}
+        />
       )}
 
     </div>

@@ -493,13 +493,6 @@ export function calculatePreMatchOdds(homeClub: Club, awayClub: Club): LiveOdds 
   return { homeWin, draw, awayWin, over25, under25 };
 }
 
-export function quickSimulateFixture(homeClub: Club, awayClub: Club): { homeScore: number, awayScore: number } {
-  const homeCl = { ...homeClub, squad: homeClub.squad.map(p => ({ ...p, matchRatings: [...p.matchRatings] })) };
-  const awayCl = { ...awayClub, squad: awayClub.squad.map(p => ({ ...p, matchRatings: [...p.matchRatings] })) };
-  
-  const fixture = simulateEntireMatch("dummy-id", homeCl, awayCl);
-  return {
-    homeScore: fixture.homeScore!,
-    awayScore: fixture.awayScore!
-  };
+export function quickSimulateFixture(homeClub: Club, awayClub: Club): Fixture {
+  return simulateEntireMatch("dummy-id", homeClub, awayClub);
 }

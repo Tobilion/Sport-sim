@@ -39,6 +39,8 @@ export interface Coach {
   rating: number; // 70 to 95
 }
 
+export type TeamFormationType = '4-3-3' | '4-4-2' | '3-5-2' | '4-2-3-1' | '5-3-2';
+
 export interface Club {
   id: string;
   name: string;
@@ -46,6 +48,7 @@ export interface Club {
   secondaryColor: string;
   squad: Player[];
   mentality: TeamMentalityType;
+  formation?: TeamFormationType;
   trainingFacilities: number; // up to lvl 5 (Increases player stat growth)
   tacticsFacilities: number;   // up to lvl 5 (Increases tactical pass modifier)
   cardioFacilities: number;    // up to lvl 5 (Reduces stamina drain)
@@ -201,5 +204,20 @@ export interface Tipster {
   weeklyTicketOdds: number;
   isSubscribed: boolean;
 }
+
+export interface TrophyRecord {
+  season: number;
+  leagueWinner: string;
+  leagueWinnerColor: string;
+  tournamentWinner: string;
+  tournamentWinnerColor: string;
+  goldenBootName: string;
+  goldenBootClub: string;
+  goldenBootGoals: number;
+  goldenGloveName: string;
+  goldenGloveClub: string;
+  goldenGloveSaves: number;
+}
+
 
 

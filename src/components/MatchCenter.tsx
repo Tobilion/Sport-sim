@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react';
-import { Play, Pause, ChevronRight, Sliders, Volume2 } from 'lucide-react';
-import { Club, LiveMatchSimulation, TeamMentalityType } from '../types';
+import React, { useRef, useEffect, useState } from 'react';
+import { Play, Pause, ChevronRight, Sliders, Volume2, UserCheck, X } from 'lucide-react';
+import { Club, LiveMatchSimulation, TeamMentalityType, Player } from '../types';
 import PitchCanvas from './PitchCanvas';
+import { SquadPitch } from './SquadPitch';
 
 interface MatchCenterProps {
   simulation: LiveMatchSimulation;
@@ -16,6 +17,8 @@ interface MatchCenterProps {
   userClubId: string;
   onTapPlayer?: (playerId: string) => void;
   onTapClub?: (clubId: string) => void;
+  onAdjustSquadLineup?: (newSquad: Player[]) => void;
+  onCloseMatch: () => void;
 }
 
 export const MatchCenter: React.FC<MatchCenterProps> = ({
@@ -30,9 +33,16 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
   onChangeUserMentality,
   userClubId,
   onTapPlayer,
-  onTapClub
+  onTapClub,
+  onAdjustSquadLineup,
+  onCloseMatch
 }) => {
   const commentaryContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isSubsModalOpen, setIsSubsModalOpen] = useState(false);
+
+  const isUserPlayingHome = homeClub.id === userClubId;
+  const isUserPlayingAway = awayClub.id === userClubId;
+  const userClubContext = isUserPlayingHome ? homeClub : isUserPlayingAway ? awayClub : null;
 
   useEffect(() => {
     const container = commentaryContainerRef.current;
@@ -70,6 +80,29 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
       return { home: '64%', away: '36%' };
     }
     return { home: '42%', away: '58%' };
+  };
+
+  const handleLiveInteractiveSwap = (starterId: string, benchId: string) => {
+    if (onAdjustSquadLineup && userClubContext) {
+      const updatedSquad = userClubContext.squad.map(p => {
+        if (p.id === starterId) {
+          return { ...p, isStarting: false };
+        }
+        if (p.id === benchId) {
+          return { ...p, isStarting: true };
+        }
+        return p;
+      });
+
+      const finalStartingCount = updatedSquad.filter(p => p.isStarting).length;
+      const finalGKCount = updatedSquad.filter(p => p.isStarting && p.position === 'GK').length;
+
+      if (finalStartingCount === 11 && finalGKCount === 1) {
+        onAdjustSquadLineup(updatedSquad);
+      } else {
+        onAdjustSquadLineup(updatedSquad); // fallback
+      }
+    }
   };
 
   const currentPossession = formatPossession();
@@ -190,6 +223,18 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
       </div>
 
       <div className="space-y-4">
+        {simulation.isFinished ? (
+          <div className="bg-[#121620] border border-emerald-500/30 rounded-2xl p-6 text-center shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+            <h3 className="text-sm font-black text-white uppercase tracking-tight mb-2">Match Concluded</h3>
+            <p className="text-[10.5px] text-slate-400 mb-4 leading-relaxed">The referee has blown the final whistle. All team statistics and match ratings have been securely registered to the campaign log.</p>
+            <button
+               onClick={onCloseMatch}
+               className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black uppercase text-xs tracking-wider rounded-xl transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:scale-[1.02]"
+            >
+               Return to Manager Office
+            </button>
+          </div>
+        ) : (
         <div className="bg-[#121620] border border-white/10 rounded-2xl p-4 space-y-4 font-medium">
           <h3 className="text-xs font-bold uppercase tracking-widest text-[#94a3b8] font-mono border-b border-white/5 pb-2">
             Simulation Controller
@@ -254,6 +299,7 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
             </div>
           </div>
         </div>
+        )}
 
         {userTeam && (
           <div className="bg-[#121620] border border-white/10 rounded-2xl p-4 space-y-3">
@@ -274,13 +320,21 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
                 value={userTeam.mentality}
                 onChange={e => onChangeUserMentality(e.target.value as TeamMentalityType)}
                 disabled={simulation.isFinished}
-                className="w-full bg-[#1c2230] border border-white/10 text-xs font-bold text-white rounded-lg p-2.5 outline-none focus:border-sky-500 transition-all uppercase cursor-pointer text-slate-300"
+                className="w-full bg-[#1c2230] border border-white/10 text-xs font-bold text-white rounded-lg p-2.5 outline-none focus:border-sky-500 transition-all uppercase cursor-pointer text-slate-300 mb-2"
               >
                 <option value="Tiki-Taka">Tiki-Taka (Tactical Passing Accuracy)</option>
                 <option value="Gegenpressing">Gegenpressing (Interception & Pressing)</option>
                 <option value="Park the Bus">Park the Bus (Aura Defensive Walls)</option>
                 <option value="Counter-Attack">Counter-Attack (Dynamic Strike Transitions)</option>
               </select>
+              <button
+                onClick={() => setIsSubsModalOpen(true)}
+                disabled={simulation.isFinished}
+                className="w-full mt-2 py-2.5 bg-sky-500 hover:bg-sky-400 text-black text-[10px] font-black uppercase rounded-lg transition-all cursor-pointer shadow-[0_0_12px_rgba(56,189,248,0.2)] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <UserCheck className="w-4 h-4" />
+                Make Live Subs
+              </button>
             </div>
           </div>
         )}
@@ -405,6 +459,30 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
           </div>
         </div>
       </div>
+
+      {isSubsModalOpen && userClubContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#0b1b11] border border-white/10 rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto custom-scrollbar shadow-2xl relative">
+            <button 
+              onClick={() => setIsSubsModalOpen(false)}
+              className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 text-white transition-all cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <h2 className="text-xl font-black text-white uppercase tracking-widest mb-1">Make Live Subs</h2>
+            <p className="text-xs text-emerald-400 font-mono mb-4">Select a starter and bench player to swap. Changes take effect next tick.</p>
+            
+            <SquadPitch 
+              squad={userClubContext.squad} 
+              mentality={userClubContext.mentality} 
+              formation={userClubContext.formation || '4-3-3'}
+              clubColor={userClubContext.color}
+              onSwapPlayers={handleLiveInteractiveSwap}
+              onTapPlayer={onTapPlayer}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Club, Player } from '../types';
 import { FIRST_NAMES, LAST_NAMES, randRange, generatePlayerAttributes } from '../data/names';
+import { SquadPitch } from './SquadPitch';
 
 interface ManagerSuiteProps {
   userClub: Club;
@@ -16,6 +17,8 @@ interface ManagerSuiteProps {
   onAdjustSquadLineup?: (newSquad: Player[]) => void;
   onAddFunds?: (amount: number) => void;
   onTapPlayer?: (playerId: string) => void;
+  onChangeUserMentality?: (mentality: TeamMentalityType) => void;
+  onChangeUserFormation?: (formation: TeamFormationType) => void;
 }
 
 export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
@@ -27,16 +30,14 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   onSellPlayer,
   onAdjustSquadLineup,
   onAddFunds,
-  onTapPlayer
+  onTapPlayer,
+  onChangeUserMentality,
+  onChangeUserFormation
 }) => {
   // Inner states
   const [activeSubTab, setActiveSubTab] = useState<'SQUAD' | 'TRANSFERS' | 'FACILITIES' | 'BOARDROOM'>('SQUAD');
   const [scoutedTransferList, setScoutedTransferList] = useState<Player[]>(() => generateInitialTransferMarket());
   const [infoMessage, setInfoMessage] = useState<string>('');
-  
-  // Lineup Swap selections
-  const [selectedStarterId, setSelectedStarterId] = useState<string | null>(null);
-  const [selectedBenchId, setSelectedBenchId] = useState<string | null>(null);
 
   // Filters State
   const [posFilter, setPosFilter] = useState<string>('ALL');
@@ -131,22 +132,18 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   const cardioCost = getUpgradeCost(userClub.cardioFacilities);
   const medicalCost = getUpgradeCost(userClub.medicalFacilities || 1);
 
-  // Lineup Swapping core
-  const handleSwapLineup = () => {
-    if (!selectedStarterId || !selectedBenchId) return;
-
+  const handleInteractiveSwap = (starterId: string, benchId: string) => {
     if (onAdjustSquadLineup) {
       const updatedSquad = userClub.squad.map(p => {
-        if (p.id === selectedStarterId) {
+        if (p.id === starterId) {
           return { ...p, isStarting: false };
         }
-        if (p.id === selectedBenchId) {
+        if (p.id === benchId) {
           return { ...p, isStarting: true };
         }
         return p;
       });
 
-      // Verify that we have exactly 11 starting players and 1 GK
       const finalStartingCount = updatedSquad.filter(p => p.isStarting).length;
       const finalGKCount = updatedSquad.filter(p => p.isStarting && p.position === 'GK').length;
 
@@ -154,14 +151,10 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
         onAdjustSquadLineup(updatedSquad);
         showMessage('Squad formations swapped successfully! Team sheet updated.');
       } else {
-        // Fallback or override to enforce proper team structures
         onAdjustSquadLineup(updatedSquad);
         showMessage('Squad swapped. Maintain active team sheet configurations.');
       }
     }
-
-    setSelectedStarterId(null);
-    setSelectedBenchId(null);
   };
 
   // Buy Player
@@ -320,52 +313,64 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
             </div>
           </div>
 
-          {/* Quick Lineup Swapper Tool */}
-          <div className="bg-gradient-to-r from-[#1c2230] to-transparent border border-white/10 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center font-bold">
-                <ArrowLeftRight className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-white">Interactive Line-up Substitution Board</h3>
-                <p className="text-[11px] text-slate-500 mt-1">Select one starting player and one substitute on the bench below, then swap their roles.</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3.5">
-              <div className="text-xs">
-                <span className="text-slate-500 uppercase block font-mono">Starter:</span>
-                <span className="text-amber-500 font-bold truncate max-w-[125px] block">
-                  {userClub.squad.find(p => p.id === selectedStarterId)?.name || 'None Selected'}
-                </span>
-              </div>
-              <div className="text-xs">
-                <span className="text-slate-500 uppercase block font-mono">Bench Sub:</span>
-                <span className="text-sky-400 font-bold truncate max-w-[125px] block">
-                  {userClub.squad.find(p => p.id === selectedBenchId)?.name || 'None Selected'}
-                </span>
-              </div>
-              <button
-                onClick={handleSwapLineup}
-                disabled={!selectedStarterId || !selectedBenchId}
-                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-500 text-black text-xs font-black uppercase rounded-lg transition-all cursor-pointer"
-              >
-                SWAP ROLES
-              </button>
-            </div>
-          </div>
-
           <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-white border-b border-white/5 pb-2">
-              📋 ACTIVE REGISTERED TEAM SHEET (11 Starters + Substitutes Bench)
-            </h3>
+            <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-white/5 pb-2">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-white mb-3 md:mb-0">
+                📋 ACTIVE REGISTERED TEAM SHEET (11 Starters + Substitutes Bench)
+              </h3>
+              
+              <div className="flex gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Formation:</span>
+                  <select 
+                    value={userClub.formation || '4-3-3'}
+                    onChange={(e) => onChangeUserFormation?.(e.target.value as any)}
+                    className="bg-slate-900 border border-white/10 text-xs font-bold text-sky-400 py-1.5 px-3 rounded-lg outline-none custom-scrollbar"
+                  >
+                    <option value="4-3-3">4-3-3</option>
+                    <option value="4-4-2">4-4-2</option>
+                    <option value="3-5-2">3-5-2</option>
+                    <option value="4-2-3-1">4-2-3-1</option>
+                    <option value="5-3-2">5-3-2</option>
+                    <option value="3-4-3">3-4-3</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Mentality:</span>
+                  <select 
+                    value={userClub.mentality}
+                    onChange={(e) => onChangeUserMentality?.(e.target.value as any)}
+                    className="bg-slate-900 border border-white/10 text-xs font-bold text-amber-500 py-1.5 px-3 rounded-lg outline-none custom-scrollbar"
+                  >
+                    <option value="Balanced">Balanced</option>
+                    <option value="Attacking">Attacking</option>
+                    <option value="Defensive">Defensive</option>
+                    <option value="Gegenpressing">Gegenpressing</option>
+                    <option value="Park the Bus">Park the Bus</option>
+                    <option value="Tiki-Taka">Tiki-Taka</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            
+            <SquadPitch 
+              squad={userClub.squad} 
+              mentality={userClub.mentality} 
+              formation={userClub.formation || '4-3-3'}
+              clubColor={userClub.color}
+              onSwapPlayers={handleInteractiveSwap}
+              onTapPlayer={onTapPlayer}
+            />
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[700px]">
-                <thead>
-                  <tr className="border-b border-white/5 text-[9px] uppercase text-slate-500 font-mono">
-                    <th className="py-2">Swap Role</th>
-                    <th className="py-2">Squad Player Card</th>
+            <div className="mt-8 border-t border-white/5 pt-4">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4">
+                Detailed Roster Statistics
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[700px]">
+                  <thead>
+                    <tr className="border-b border-white/5 text-[9px] uppercase text-slate-500 font-mono">
+                      <th className="py-2">Squad Player Card</th>
                     <th className="py-2 text-center">POS</th>
                     <th className="py-2 text-center">OVR</th>
                     <th className="py-2 text-center">STAMINA</th>
@@ -378,30 +383,12 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                 <tbody className="divide-y divide-white/5">
                   {userClub.squad.map(player => {
                     const isStarter = player.isStarting;
-                    const isSwapSelected = selectedStarterId === player.id || selectedBenchId === player.id;
 
                     return (
                       <tr 
                         key={player.id} 
-                        className={`text-xs hover:bg-white/5 transition-all ${
-                          isSwapSelected ? 'bg-sky-500/5 font-semibold' : ''
-                        }`}
+                        className="text-xs hover:bg-white/5 transition-all"
                       >
-                        <td className="py-3">
-                          <input
-                            type="checkbox"
-                            checked={isSwapSelected}
-                            disabled={(isStarter && selectedStarterId !== null && selectedStarterId !== player.id) || (!isStarter && selectedBenchId !== null && selectedBenchId !== player.id)}
-                            onChange={() => {
-                              if (isStarter) {
-                                setSelectedStarterId(selectedStarterId === player.id ? null : player.id);
-                              } else {
-                                setSelectedBenchId(selectedBenchId === player.id ? null : player.id);
-                              }
-                            }}
-                            className="w-4 h-4 text-sky-500 accent-sky-500 rounded cursor-pointer"
-                          />
-                        </td>
                         <td className="py-3">
                           <div className="flex flex-col">
                             <span 
@@ -476,6 +463,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* TRANSFER MARKET VIEW */}

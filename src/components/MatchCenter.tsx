@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Play, Pause, ChevronRight, Sliders, Volume2, UserCheck, X } from 'lucide-react';
-import { Club, LiveMatchSimulation, TeamMentalityType, Player } from '../types';
+import { Club, LiveMatchSimulation, TeamMentalityType, Player, PlaystyleType, TeamFormationType } from '../types';
 import PitchCanvas from './PitchCanvas';
 import { SquadPitch } from './SquadPitch';
 
@@ -14,6 +14,8 @@ interface MatchCenterProps {
   onStepSimulation: () => void;
   onSetSpeed: (speedMs: number) => void;
   onChangeUserMentality: (ment: TeamMentalityType) => void;
+  onChangeUserPlaystyle?: (p: PlaystyleType) => void;
+  onChangeUserFormation?: (f: TeamFormationType) => void;
   userClubId: string;
   onTapPlayer?: (playerId: string) => void;
   onTapClub?: (clubId: string) => void;
@@ -31,6 +33,8 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
   onStepSimulation,
   onSetSpeed,
   onChangeUserMentality,
+  onChangeUserPlaystyle,
+  onChangeUserFormation,
   userClubId,
   onTapPlayer,
   onTapClub,
@@ -148,8 +152,13 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
               </span>
             )}
             {simulation.isSpectating && (
-              <span className="text-[8px] bg-amber-500/15 text-amber-400 border border-amber-505/20 px-2 py-0.5 rounded font-mono font-black uppercase mt-1 animate-pulse">
+              <span className="text-[8px] bg-amber-500/15 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-mono font-black uppercase mt-1 animate-pulse">
                 Spectating (No Coach Power)
+              </span>
+            )}
+            {simulation.weather && (
+              <span className="text-[8px] bg-white/5 text-slate-300 px-2.5 py-0.5 rounded-full font-mono font-bold uppercase mt-1">
+                Weather: {simulation.weather}
               </span>
             )}
           </div>
@@ -313,20 +322,49 @@ export const MatchCenter: React.FC<MatchCenterProps> = ({
               </span>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] text-slate-500 uppercase font-mono">Select Active Team Mentality</label>
-              <select
-                id="mentality-tactical-select"
-                value={userTeam.mentality}
-                onChange={e => onChangeUserMentality(e.target.value as TeamMentalityType)}
-                disabled={simulation.isFinished}
-                className="w-full bg-[#1c2230] border border-white/10 text-xs font-bold text-white rounded-lg p-2.5 outline-none focus:border-sky-500 transition-all uppercase cursor-pointer text-slate-300 mb-2"
-              >
-                <option value="Tiki-Taka">Tiki-Taka (Tactical Passing Accuracy)</option>
-                <option value="Gegenpressing">Gegenpressing (Interception & Pressing)</option>
-                <option value="Park the Bus">Park the Bus (Aura Defensive Walls)</option>
-                <option value="Counter-Attack">Counter-Attack (Dynamic Strike Transitions)</option>
-              </select>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] text-slate-500 uppercase font-mono">Select Active Team Mentality</label>
+                <select
+                  value={userTeam.mentality}
+                  onChange={e => onChangeUserMentality(e.target.value as TeamMentalityType)}
+                  disabled={simulation.isFinished}
+                  className="w-full bg-[#1c2230] border border-white/10 text-xs font-bold text-white rounded-lg p-2.5 outline-none focus:border-sky-500 transition-all uppercase cursor-pointer"
+                >
+                  <option value="Tiki-Taka">Tiki-Taka (Tactical Passing Accuracy)</option>
+                  <option value="Gegenpressing">Gegenpressing (Interception & Pressing)</option>
+                  <option value="Park the Bus">Park the Bus (Aura Defensive Walls)</option>
+                  <option value="Counter-Attack">Counter-Attack (Dynamic Strike Transitions)</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] text-slate-500 uppercase font-mono">Select Playstyle focus</label>
+                <select
+                  value={userTeam.playstyle || 'Balanced'}
+                  onChange={e => onChangeUserPlaystyle?.(e.target.value as PlaystyleType)}
+                  disabled={simulation.isFinished}
+                  className="w-full bg-[#1c2230] border border-white/10 text-xs font-bold text-white rounded-lg p-2.5 outline-none focus:border-sky-500 transition-all uppercase cursor-pointer"
+                >
+                  <option value="Attacking">Attacking</option>
+                  <option value="Balanced">Balanced</option>
+                  <option value="Defending">Defending</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] text-slate-500 uppercase font-mono">Select Active Formation</label>
+                <select
+                  value={userTeam.formation || '4-3-3'}
+                  onChange={e => onChangeUserFormation?.(e.target.value as TeamFormationType)}
+                  disabled={simulation.isFinished}
+                  className="w-full bg-[#1c2230] border border-white/10 text-xs font-bold text-white rounded-lg p-2.5 outline-none focus:border-sky-500 transition-all uppercase cursor-pointer"
+                >
+                  <option value="4-3-3">4-3-3</option>
+                  <option value="4-4-2">4-4-2</option>
+                  <option value="3-5-2">3-5-2</option>
+                  <option value="4-2-3-1">4-2-3-1</option>
+                  <option value="5-3-2">5-3-2</option>
+                </select>
+              </div>
               <button
                 onClick={() => setIsSubsModalOpen(true)}
                 disabled={simulation.isFinished}

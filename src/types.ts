@@ -9,11 +9,32 @@ export interface PlayerAttributes {
   physical: number;
 }
 
+export interface ManagerSkills {
+  xp: number;
+  level: number;
+  skillPoints: number;
+  tacticalMastermind: number;
+  negotiator: number;
+  youthDevelopment: number;
+}
+
+export interface NewsItem {
+  id: string;
+  week: number;
+  headline: string;
+  type: 'match' | 'transfer' | 'injury' | 'general';
+}
+
 export interface Player {
   id: string;
   name: string;
   position: 'GK' | 'DEF' | 'MID' | 'ATT';
+  age: number;
   rating: number;
+  potentialRating?: number;
+  isYouth?: boolean;
+  isFocused?: boolean;
+  focusedCoachId?: string | null;
   stamina: number; // 0 to 100
   morale: number;  // 0 to 100
   goals: number;
@@ -24,6 +45,7 @@ export interface Player {
   marketValue: number;
   attributes: PlayerAttributes;
   isStarting: boolean; // Managed by team sheet for lineups
+  trainingProgress?: number; // 0 to 100
   saves?: number;
   tournamentGoals?: number;
   tournamentAssists?: number;
@@ -32,11 +54,16 @@ export interface Player {
   tournamentSaves?: number;
 }
 
+export type PlaystyleType = 'Attacking' | 'Balanced' | 'Defending';
+
 export interface Coach {
+  id: string;
   name: string;
-  nationality: string;
-  specialty: 'Defending' | 'Attacking' | 'Youth' | 'Tactics' | 'Fitness' | 'Physio';
+  age: number;
+  specialty: 'Defending' | 'Attacking' | 'Youth' | 'Tactics' | 'Fitness' | 'Goalkeeping' | 'Set Pieces' | 'Corners' | 'Development' | string;
   rating: number; // 70 to 95
+  preferredMentality?: TeamMentalityType;
+  cost: number;
 }
 
 export type TeamFormationType = '4-3-3' | '4-4-2' | '3-5-2' | '4-2-3-1' | '5-3-2';
@@ -47,13 +74,16 @@ export interface Club {
   color: string;
   secondaryColor: string;
   squad: Player[];
+  youthSquad?: Player[];
   mentality: TeamMentalityType;
+  playstyle?: PlaystyleType;
   formation?: TeamFormationType;
   trainingFacilities: number; // up to lvl 5 (Increases player stat growth)
   tacticsFacilities: number;   // up to lvl 5 (Increases tactical pass modifier)
   cardioFacilities: number;    // up to lvl 5 (Reduces stamina drain)
   medicalFacilities: number;   // up to lvl 5 (Heals stamina after matches faster)
   coach: Coach;
+  coaches?: Coach[];
   points: number;
   played: number;
   won: number;
@@ -82,6 +112,7 @@ export interface LiveMatchSimulation {
   awayScore: number;
   tick: number; // 0 to 30 (15 per half)
   isFinished: boolean;
+  weather?: WeatherCondition;
   possession: 'home' | 'away';
   ballX: number; // 0 to 100 (0=home goal, 100=away goal)
   ballY: number; // 0 to 100
@@ -99,7 +130,20 @@ export interface LiveMatchSimulation {
   homeConcededFouls: number;
   awayConcededFouls: number;
   isSpectating?: boolean;
+  userPlaystyle?: PlaystyleType;
+  userFormation?: TeamFormationType;
 }
+
+export type WeatherCondition =
+  | 'Clear Skies'
+  | 'Light Rain'
+  | 'Heavy Rain'
+  | 'Snow'
+  | 'Strong Wind'
+  | 'Extreme Heat'
+  | 'Night Game'
+  | 'Fog'
+  | 'Thunderstorm';
 
 export interface Fixture {
   id: string;
@@ -109,6 +153,7 @@ export interface Fixture {
   homeScore?: number;
   awayScore?: number;
   isCompleted: boolean;
+  weather?: WeatherCondition;
   homeGoalsDetail?: string[]; // scorer names
   awayGoalsDetail?: string[];
   homePossession?: number;

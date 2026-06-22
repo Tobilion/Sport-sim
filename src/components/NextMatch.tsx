@@ -123,6 +123,20 @@ export const NextMatch: React.FC<NextMatchProps> = ({
   const nextTournamentMatch = nextGroupMatch || nextKnockoutMatch || null;
 
   // 4. Verify if assignment this week is resolved
+  const getNextTournamentWeek = () => {
+    if (!nextTournamentMatch) return null;
+    if ('week' in nextTournamentMatch) return (nextTournamentMatch as any).week;
+    if ('round' in nextTournamentMatch) {
+      const r = (nextTournamentMatch as any).round;
+      if (r === 'R16') return 12;
+      if (r === 'QF') return 15;
+      if (r === 'SF') return 18;
+      if (r === 'F') return 21;
+    }
+    return null;
+  };
+  const isTourneyMatchThisWeekReady = getNextTournamentWeek() === currentWeek;
+
   const isLeagueWeekMatchDone = !userLeagueMatchThisWeek || userLeagueMatchThisWeek.isCompleted;
   const isTournamentWeekMatchDone = campaignType !== 'dual' || !userTournamentMatchThisWeek || userTournamentMatchThisWeek.isCompleted;
   const isAllAssignmentsDoneThisWeek = isLeagueWeek ? isLeagueWeekMatchDone : isTournamentWeekMatchDone;
@@ -285,13 +299,27 @@ export const NextMatch: React.FC<NextMatchProps> = ({
                         </div>
                       </div>
 
-                      {/* Info bar / Form */}
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-900/30 p-2 border border-white/5 rounded-xl">
-                        <Activity className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                        <span className="truncate">
-                          Opponent form: &nbsp;
-                          <span className="font-mono tracking-widest text-[#facc15] font-black">{opp.streak.join('-') || 'N/A'}</span>
-                        </span>
+                      {/* Weather Info & form bar */}
+                      <div className="flex flex-col gap-2 mt-2">
+                        {(nextLeagueMatch as Fixture).weather && (
+                          <div className={`p-2 rounded-xl border flex items-center justify-between text-[10px] font-bold uppercase ${
+                            ['Heavy Rain', 'Snow', 'Extreme Heat', 'Strong Wind', 'Thunderstorm'].includes((nextLeagueMatch as Fixture).weather || '') 
+                            ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+                            : ['Clear Skies'].includes((nextLeagueMatch as Fixture).weather || '') 
+                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                              : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
+                          }`}>
+                            <span>Weather condition:</span>
+                            <span>☁️ {(nextLeagueMatch as Fixture).weather}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-900/30 p-2 border border-white/5 rounded-xl">
+                          <Activity className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                          <span className="truncate">
+                            Opponent form: &nbsp;
+                            <span className="font-mono tracking-widest text-[#facc15] font-black">{opp.streak.join('-') || 'N/A'}</span>
+                          </span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -469,12 +497,26 @@ export const NextMatch: React.FC<NextMatchProps> = ({
                       </div>
 
                       {/* Info bar / Form */}
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-900/30 p-2 border border-white/5 rounded-xl">
-                        <Activity className="w-3.5 h-3.5 text-[#facc15] shrink-0" />
-                        <span className="truncate">
-                          Opponent form: &nbsp;
-                          <span className="font-mono tracking-widest text-[#facc15] font-black">{opp.streak.join('-') || 'N/A'}</span>
-                        </span>
+                      <div className="flex flex-col gap-2 mt-2">
+                        {('weather' in nextTournamentMatch ? (nextTournamentMatch as Fixture).weather : false) && (
+                          <div className={`p-2 rounded-xl border flex items-center justify-between text-[10px] font-bold uppercase ${
+                            ['Heavy Rain', 'Snow', 'Extreme Heat', 'Strong Wind', 'Thunderstorm'].includes((nextTournamentMatch as Fixture).weather || '') 
+                            ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+                            : ['Clear Skies'].includes((nextTournamentMatch as Fixture).weather || '') 
+                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                              : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
+                          }`}>
+                            <span>Weather condition:</span>
+                            <span>☁️ {(nextTournamentMatch as Fixture).weather}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-900/30 p-2 border border-white/5 rounded-xl">
+                          <Activity className="w-3.5 h-3.5 text-[#facc15] shrink-0" />
+                          <span className="truncate">
+                            Opponent form: &nbsp;
+                            <span className="font-mono tracking-widest text-[#facc15] font-black">{opp.streak.join('-') || 'N/A'}</span>
+                          </span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -486,7 +528,7 @@ export const NextMatch: React.FC<NextMatchProps> = ({
               </div>
 
               {/* Bottom control trigger */}
-              {campaignType === 'dual' && !isLeagueWeek && nextTournamentMatch && (nextTournamentMatch as any).week === currentWeek ? (
+              {campaignType === 'dual' && !isLeagueWeek && nextTournamentMatch && isTourneyMatchThisWeekReady ? (
                 <div className="mt-5 space-y-3 pt-3 border-t border-white/5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[9px] text-slate-500 font-mono uppercase font-black">TACT_MENTALITY:</span>
@@ -525,7 +567,7 @@ export const NextMatch: React.FC<NextMatchProps> = ({
                   <span className="text-[9px] text-slate-400 font-mono uppercase leading-normal">
                     {!isLeagueWeek && isTournamentWeekMatchDone 
                       ? '✓ Week assignment complete. Awaiting cycle advance.' 
-                      : `🔒 Active tournament Match is locked (Awaiting tournament week scheduled match)`}
+                      : `🔒 Active tournament Match is locked (Wait for scheduled Cup Week ${getNextTournamentWeek()})`}
                   </span>
                 </div>
               ) : null}

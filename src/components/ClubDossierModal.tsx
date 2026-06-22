@@ -79,7 +79,9 @@ export const ClubDossierModal: React.FC<ClubDossierModalProps> = ({ club, league
                 <div className="bg-[#1c2230] p-3 rounded-xl border border-white/5">
                   <span className="text-slate-500 font-bold block uppercase text-[8px] font-mono mb-1">Assigned Head Coach</span>
                   <span className="text-white font-extrabold block text-sm">{club.coach.name}</span>
-                  <span className="text-[9px] text-slate-400 block mt-0.5">{club.coach.nationality} ({club.coach.specialty} coach)</span>
+                  <span className="text-[9px] text-slate-300 block mt-0.5">
+                    Age: <span className="text-sky-400 font-bold">{club.coach.age || 48}</span> • {club.coach.nationality || "Pro"} ({club.coach.specialty} coach)
+                  </span>
                 </div>
                 <div className="bg-[#1c2230] p-3 rounded-xl border border-white/5">
                   <span className="text-slate-500 font-bold block uppercase text-[8px] font-mono mb-1">Club Mentality Style</span>

@@ -31,8 +31,11 @@ import {
   Shield,
   Search,
   BookOpen,
-  MapPin, // MapPin and other options for pristine layouts
+  MapPin,
   Info,
+  Bell,
+  Home,
+  MoreHorizontal,
 } from "lucide-react";
 
 import {
@@ -49,6 +52,8 @@ import {
   TeamFormationType,
   PlaystyleType,
   WeatherCondition,
+  NotificationItem,
+  PostMatchAnalysis,
 } from "./types";
 
 import {
@@ -62,6 +67,7 @@ import {
   simulateTick as simulateMatchTick,
   runAssistantSubstitution,
   quickSimulateFixture,
+  generatePostMatchAnalysis,
 } from "./engine/matchEngine";
 
 import { MatchCenter } from "./components/MatchCenter";
@@ -75,6 +81,8 @@ import { NextMatch } from "./components/NextMatch";
 import { AnalyticsCenter } from "./components/AnalyticsCenter";
 import { AllTeams } from "./components/AllTeams";
 import { TrophiesCenter } from "./components/TrophiesCenter";
+import { PostMatchModal } from "./components/PostMatchModal";
+import { NotificationDrawer } from "./components/NotificationDrawer";
 
 interface SaveSlot {
   id: string;
@@ -97,6 +105,12 @@ interface SaveSlot {
 
 // Fixed constant for starting budget
 const START_BUDGET = 45000;
+
+// Prize money per finishing position (20-team league)
+const LEAGUE_PRIZE_MONEY = [
+  5000000, 3500000, 2500000, 1800000, 1200000, 900000, 700000, 500000,
+  400000, 300000, 200000, 150000, 100000, 75000, 50000, 40000, 30000, 20000, 15000, 10000,
+];
 
 // Dynamic round-robin Berger generator for 20 teams (19 rounds)
 function generateLeagueFixtures20(clubIds: string[]): Fixture[] {
@@ -518,7 +532,29 @@ export default function App() {
   const [simSpeed, setSimSpeed] = useState<number>(1000); // ms per tick
   const [simMessage, setSimMessage] = useState<string>("");
 
+  // v2: Notifications
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
+
+  // v2: Post-match analysis modal
+  const [postMatchAnalysis, setPostMatchAnalysis] = useState<PostMatchAnalysis | null>(null);
+
+  // v2: Media pressure (consecutive losses)
+  const [consecutiveLosses, setConsecutiveLosses] = useState<number>(0);
+  const [showPressureModal, setShowPressureModal] = useState<boolean>(false);
+
   const simRef = useRef<any>(null);
+
+  // v2: Add a notification helper
+  const addNotification = (item: Omit<NotificationItem, 'id' | 'timestamp' | 'read'>) => {
+    const newNotif: NotificationItem = {
+      ...item,
+      id: `notif-${Date.now()}-${Math.random()}`,
+      timestamp: Date.now(),
+      read: false,
+    };
+    setNotifications(prev => [newNotif, ...prev].slice(0, 30));
+  };
 
   // Sync slots to localstorage
   useEffect(() => {
@@ -1018,31 +1054,36 @@ export default function App() {
       let reward = 2200;
       let userWon = false;
       let userDrawn = false;
+      let userLost = false;
 
       if (finalSim.homeClubId === userClubId) {
         if (finalSim.homeScore > finalSim.awayScore) userWon = true;
-        if (finalSim.homeScore === finalSim.awayScore) userDrawn = true;
+        else if (finalSim.homeScore === finalSim.awayScore) userDrawn = true;
+        else userLost = true;
       } else {
         if (finalSim.awayScore > finalSim.homeScore) userWon = true;
-        if (finalSim.awayScore === finalSim.homeScore) userDrawn = true;
+        else if (finalSim.awayScore === finalSim.homeScore) userDrawn = true;
+        else userLost = true;
       }
 
       if (userWon) {
         reward += 2800;
-        nextManagerSkills = {
-          ...nextManagerSkills,
-          xp: nextManagerSkills.xp + 150,
-        };
+        nextManagerSkills = { ...nextManagerSkills, xp: nextManagerSkills.xp + 150 };
+        setConsecutiveLosses(0);
+        addNotification({ type: 'match', title: 'Victory!', body: `You won ${finalSim.homeScore}–${finalSim.awayScore}. Matchday revenue credited.` });
       } else if (userDrawn) {
-        nextManagerSkills = {
-          ...nextManagerSkills,
-          xp: nextManagerSkills.xp + 50,
-        };
-      } else {
-        nextManagerSkills = {
-          ...nextManagerSkills,
-          xp: nextManagerSkills.xp + 25,
-        };
+        nextManagerSkills = { ...nextManagerSkills, xp: nextManagerSkills.xp + 50 };
+        setConsecutiveLosses(0);
+      } else if (userLost) {
+        nextManagerSkills = { ...nextManagerSkills, xp: nextManagerSkills.xp + 25 };
+        setConsecutiveLosses(prev => {
+          const newCount = prev + 1;
+          if (newCount >= 3) {
+            setShowPressureModal(true);
+            addNotification({ type: 'board', title: 'Board Warning', body: `The board is concerned after ${newCount} consecutive defeats. Results must improve.` });
+          }
+          return newCount;
+        });
       }
 
       if (nextManagerSkills.xp >= nextManagerSkills.level * 1000) {
@@ -1053,16 +1094,47 @@ export default function App() {
 
       setManagerSkills(nextManagerSkills);
 
+      // Matchday revenue (based on club reputation)
+      const userClubObj = updatedClubs.find(c => c.id === userClubId);
+      const rep = userClubObj?.reputation ?? 50;
+      const matchdayRev = Math.round(rep * 800 + randRange(5000, 25000));
+      reward += matchdayRev;
+
       if (!isLeagueMatch) reward += 1500;
 
       nextBalance = userBalance + reward;
       setUserBalance(nextBalance);
-      setSimMessage(
-        `Matchday completed! Budget credited +$${reward.toLocaleString()} matchday yield.`,
-      );
+      setSimMessage(`Matchday complete! +$${reward.toLocaleString()} (incl. $${matchdayRev.toLocaleString()} matchday revenue)`);
+
+      // Generate and show post-match analysis
+      if (homeClub && awayClub && !finalSim.isSpectating) {
+        const analysis = generatePostMatchAnalysis(finalSim, homeClub, awayClub);
+        setPostMatchAnalysis(analysis);
+      }
     } else {
       setSimMessage("Fixture simulation complete! Returned to matchday deck.");
     }
+
+    // Update player form streaks for user club
+    updatedClubs = updatedClubs.map(club => {
+      if (club.id !== userClubId) return club;
+      const userWon2 = (finalSim.homeClubId === userClubId && finalSim.homeScore > finalSim.awayScore)
+        || (finalSim.awayClubId === userClubId && finalSim.awayScore > finalSim.homeScore);
+      const userLost2 = (finalSim.homeClubId === userClubId && finalSim.homeScore < finalSim.awayScore)
+        || (finalSim.awayClubId === userClubId && finalSim.awayScore < finalSim.homeScore);
+      return {
+        ...club,
+        squad: club.squad.map(p => {
+          if (!p.isStarting) return p;
+          const lastRating = p.matchRatings[p.matchRatings.length - 1] || 6.0;
+          let formDelta = 0;
+          if (lastRating >= 7.0) formDelta = 1;
+          else if (lastRating <= 5.5) formDelta = -1;
+          const newFormStreak = Math.max(-5, Math.min(5, (p.formStreak || 0) + formDelta));
+          return { ...p, formStreak: newFormStreak };
+        }),
+      };
+    });
 
     // Save states and cache
     setAllClubs(updatedClubs);
@@ -1324,6 +1396,32 @@ export default function App() {
         return {
           ...club,
           coaches: [...(club.coaches || []), newCoach],
+        };
+      }
+      return club;
+    });
+
+    setAllClubs(updated);
+    saveCurrentSlotProgress(
+      updated,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nextBalance,
+    );
+  };
+
+  const handleDismissCoach = (coachId: string, refundAmount: number) => {
+    const nextBalance = userBalance + refundAmount;
+    setUserBalance(nextBalance);
+
+    const updated = allClubs.map((club) => {
+      if (club.id === userClubId) {
+        return {
+          ...club,
+          coaches: (club.coaches || []).filter((c) => c.id !== coachId),
+          // If dismissing the primary coach, keep it but also remove from coaches array
         };
       }
       return club;
@@ -2271,8 +2369,38 @@ export default function App() {
     setIsSeasonReviewOpen(false);
 
     if (choice === "stay" || choice === "change") {
-      // 1. Capture the final trophies achieved during this campaign year
-      const newTrophy = captureSeasonTrophies(allClubs, cupBracket);
+      // 1. Award prize money based on league finish position
+      const leagueStandings = [...allClubs].slice(0, 20).sort((a, b) => {
+        if (b.points !== a.points) return b.points - a.points;
+        if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+        return b.goalsFor - a.goalsFor;
+      });
+      const userFinishPosition = leagueStandings.findIndex(c => c.id === userClubId);
+      const prizeMoney = LEAGUE_PRIZE_MONEY[Math.max(0, userFinishPosition)] || 10000;
+      const balanceAfterPrize = userBalance + prizeMoney;
+      setUserBalance(balanceAfterPrize);
+      addNotification({
+        type: 'general',
+        title: 'Season Prize Money',
+        body: `Finished ${userFinishPosition + 1}${['st','nd','rd'][userFinishPosition] || 'th'} in the league. Prize money: $${prizeMoney.toLocaleString()}`,
+      });
+
+      // 2. Update club reputation based on finish
+      const updatedReputationClubs = allClubs.map(club => {
+        if (club.id !== userClubId) return club;
+        const pos = userFinishPosition;
+        let repChange = 0;
+        if (pos === 0) repChange = 15;
+        else if (pos <= 3) repChange = 8;
+        else if (pos <= 9) repChange = 3;
+        else if (pos <= 14) repChange = -3;
+        else repChange = -8;
+        return { ...club, reputation: Math.max(0, Math.min(100, (club.reputation ?? 50) + repChange)) };
+      });
+      setAllClubs(updatedReputationClubs);
+
+      // 3. Capture the final trophies achieved during this campaign year
+      const newTrophy = captureSeasonTrophies(updatedReputationClubs, cupBracket);
       const nextTrophies = [...historyTrophies, newTrophy];
       setHistoryTrophies(nextTrophies);
 
@@ -2293,9 +2421,9 @@ export default function App() {
         feedbackMsg = `Job Accepted! Transferred to direct operations at ${nextClub.name}!`;
       }
 
-      // 3. Clean statistics records and individual player records across all clubs
+      // 4. Clean statistics records and individual player records across all clubs
       // Also perform aging, retirement, and wonderkid spawning
-      const resetStatsClubs = allClubs.map((c) => {
+      const resetStatsClubs = updatedReputationClubs.map((c) => {
         let currentSquad = c.squad.map((p) => ({
           ...p,
           age: (p.age || 25) + 1, // Age up
@@ -2387,13 +2515,14 @@ export default function App() {
         resetBracket,
         1,
         "Group",
-        userBalance,
+        balanceAfterPrize,
         resetTournamentFixtures,
         nextTrophies,
         newManagerSkills,
         newNews,
       );
-      setSimMessage(feedbackMsg);
+      setSimMessage(`${feedbackMsg} Season prize money: $${prizeMoney.toLocaleString()}`);
+      setConsecutiveLosses(0);
     } else {
       handleHardReset();
     }
@@ -2618,10 +2747,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#090b0f] text-slate-200 font-sans overflow-hidden select-none text-left">
-      {/* 1. LEFT SIDEBAR: PREMIUM OPERATIONS NAVIGATION */}
+      {/* 1. LEFT SIDEBAR: PREMIUM OPERATIONS NAVIGATION — hidden on mobile */}
       <nav
         id="sidebar-rail"
-        className="w-20 md:w-24 flex flex-col items-center py-6 border-r border-white/10 bg-[#0c0f16] justify-between z-10 shrink-0"
+        className="hidden lg:flex w-20 xl:w-24 flex-col items-center py-6 border-r border-white/10 bg-[#0c0f16] justify-between z-10 shrink-0"
       >
         <div className="flex flex-col items-center gap-8 w-full">
           {/* LOGO */}
@@ -2741,16 +2870,29 @@ export default function App() {
           </div>
 
           {/* RIGHT BALANCE DISPLAY HUD AND USER CREST */}
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-end">
+          <div className="flex items-center gap-3 sm:gap-6">
+            <div className="hidden sm:flex flex-col items-end">
               <span className="text-[9px] uppercase text-slate-500 font-bold tracking-widest mb-0.5 flex items-center gap-1">
                 <Wallet className="w-3 h-3 text-emerald-400" />
-                Club Operations Budget
+                Budget
               </span>
-              <span className="text-emerald-450 font-mono font-black text-xl leading-none">
+              <span className="text-emerald-400 font-mono font-black text-xl leading-none">
                 ${userBalance.toLocaleString()}
               </span>
             </div>
+
+            {/* Notification Bell */}
+            <button
+              onClick={() => setIsNotificationDrawerOpen(true)}
+              className="relative w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center transition-all cursor-pointer"
+            >
+              <Bell className="w-4 h-4 text-slate-400" />
+              {notifications.filter(n => !n.read).length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-sky-500 text-black font-black text-[8px] flex items-center justify-center">
+                  {notifications.filter(n => !n.read).length}
+                </span>
+              )}
+            </button>
 
             <div className="flex items-center gap-2.5">
               <div
@@ -2783,7 +2925,7 @@ export default function App() {
         )}
 
         {/* MAIN PANEL CONTENT VIEW */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[#090b0f]">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[#090b0f] pb-20 lg:pb-8">
           {currentTabProgress === "MANAGER" && (
             <ManagerSuite
               userClub={currentActiveUserClub}
@@ -2803,6 +2945,7 @@ export default function App() {
               onTogglePlayerFocus={handleTogglePlayerFocus}
               onAssignCoachToPlayer={handleAssignCoachToPlayer}
               onBuyCoach={handleBuyCoach}
+              onDismissCoach={handleDismissCoach}
               managerName={managerName}
               managerSkills={managerSkills}
               onUpgradeSkill={(skill) => {
@@ -3478,6 +3621,74 @@ export default function App() {
           onResolve={handleSeasonResolution}
         />
       )}
+
+      {/* 6. POST-MATCH ANALYSIS MODAL */}
+      {postMatchAnalysis && !isSeasonReviewOpen && (
+        <PostMatchModal
+          analysis={postMatchAnalysis}
+          homeClub={allClubs.find(c => c.id === postMatchAnalysis.homeClubId) || currentActiveUserClub}
+          awayClub={allClubs.find(c => c.id === postMatchAnalysis.awayClubId) || currentActiveUserClub}
+          onClose={() => setPostMatchAnalysis(null)}
+        />
+      )}
+
+      {/* 7. NOTIFICATION DRAWER */}
+      {isNotificationDrawerOpen && (
+        <NotificationDrawer
+          notifications={notifications}
+          onClose={() => setIsNotificationDrawerOpen(false)}
+          onMarkAllRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+          onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
+        />
+      )}
+
+      {/* 8. MEDIA PRESSURE MODAL */}
+      {showPressureModal && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#121620] border border-rose-500/30 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl p-6 space-y-4">
+            <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto">
+              <AlertCircle className="w-7 h-7 text-rose-400" />
+            </div>
+            <h2 className="text-center text-lg font-black text-white uppercase tracking-tight">Board Warning</h2>
+            <p className="text-xs text-slate-400 text-center leading-relaxed">
+              The board is concerned about your recent form. {consecutiveLosses} consecutive defeats is unacceptable. Results must improve immediately or consequences will follow.
+            </p>
+            <button
+              onClick={() => setShowPressureModal(false)}
+              className="w-full py-3 bg-rose-500 hover:bg-rose-400 text-black font-black uppercase text-xs tracking-wider rounded-xl transition-all cursor-pointer"
+            >
+              Understood — I'll Turn This Around
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MOBILE BOTTOM NAV — visible only on small screens */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0c0f16] border-t border-white/10 flex items-stretch h-16 safe-area-inset-bottom">
+        {[
+          { id: 'MANAGER' as const, label: 'Manager', icon: Briefcase },
+          { id: 'NEXT_MATCH' as const, label: 'Match', icon: Zap },
+          { id: 'STANDINGS' as const, label: 'League', icon: Award },
+          { id: 'FIXTURES' as const, label: 'Fixtures', icon: Calendar },
+          { id: 'ANALYTICS' as const, label: 'Leaders', icon: BarChart3 },
+        ].map(item => {
+          const Icon = item.icon;
+          const isActive = currentTabProgress === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setCurrentTabProgress(item.id)}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all cursor-pointer relative ${
+                isActive ? 'text-sky-400' : 'text-slate-600 hover:text-slate-400'
+              }`}
+            >
+              {isActive && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-sky-400 rounded-full" />}
+              <Icon className="w-5 h-5" />
+              <span className="text-[9px] font-bold uppercase tracking-wider">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

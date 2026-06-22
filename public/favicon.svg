@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <radialGradient id="ballGrad" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#1e3a4f"/>
+      <stop offset="100%" stop-color="#0b0f1a"/>
+    </radialGradient>
+    <radialGradient id="glowGrad" cx="38%" cy="32%" r="55%">
+      <stop offset="0%" stop-color="#00d4ff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#00d4ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Outer glow ring -->
+  <circle cx="32" cy="32" r="31" fill="none" stroke="#00d4ff" stroke-width="1" opacity="0.35"/>
+
+  <!-- Ball body -->
+  <circle cx="32" cy="32" r="29" fill="url(#ballGrad)"/>
+  <circle cx="32" cy="32" r="29" fill="url(#glowGrad)"/>
+
+  <!-- Soccer ball panel lines — cyan accent -->
+  <!-- Central pentagon -->
+  <polygon
+    points="32,18 40.5,24 37.5,34 26.5,34 23.5,24"
+    fill="#00d4ff" fill-opacity="0.15"
+    stroke="#00d4ff" stroke-width="1.4" stroke-opacity="0.9"
+    stroke-linejoin="round"
+  />
+
+  <!-- Top panel line arms radiating outward -->
+  <!-- Top -->
+  <line x1="32" y1="18" x2="32" y2="5"  stroke="#00d4ff" stroke-width="1.2" stroke-opacity="0.6"/>
+  <!-- Top-right -->
+  <line x1="40.5" y1="24" x2="52" y2="18" stroke="#00d4ff" stroke-width="1.2" stroke-opacity="0.6"/>
+  <!-- Bottom-right -->
+  <line x1="37.5" y1="34" x2="48" y2="44" stroke="#00d4ff" stroke-width="1.2" stroke-opacity="0.6"/>
+  <!-- Bottom-left -->
+  <line x1="26.5" y1="34" x2="16" y2="44" stroke="#00d4ff" stroke-width="1.2" stroke-opacity="0.6"/>
+  <!-- Top-left -->
+  <line x1="23.5" y1="24" x2="12" y2="18" stroke="#00d4ff" stroke-width="1.2" stroke-opacity="0.6"/>
+
+  <!-- Outer hexagons (simplified arcs connecting the arm ends) -->
+  <polyline points="32,5 43,3 52,10 52,18" fill="none" stroke="#00d4ff" stroke-width="1" stroke-opacity="0.45" stroke-linejoin="round"/>
+  <polyline points="52,18 60,26 58,36 48,44" fill="none" stroke="#00d4ff" stroke-width="1" stroke-opacity="0.45" stroke-linejoin="round"/>
+  <polyline points="48,44 44,56 32,59 20,56" fill="none" stroke="#00d4ff" stroke-width="1" stroke-opacity="0.45" stroke-linejoin="round"/>
+  <polyline points="20,56 16,44 6,36 4,26" fill="none" stroke="#00d4ff" stroke-width="1" stroke-opacity="0.45" stroke-linejoin="round"/>
+  <polyline points="4,26 12,18 12,10 21,3 32,5" fill="none" stroke="#00d4ff" stroke-width="1" stroke-opacity="0.45" stroke-linejoin="round"/>
+
+  <!-- Highlight sheen -->
+  <ellipse cx="26" cy="22" rx="7" ry="4.5" fill="white" fill-opacity="0.06" transform="rotate(-20,26,22)"/>
+
+  <!-- Border ring -->
+  <circle cx="32" cy="32" r="29" fill="none" stroke="#00d4ff" stroke-width="1.6" opacity="0.7"/>
+</svg>

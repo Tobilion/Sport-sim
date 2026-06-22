@@ -1,5 +1,93 @@
 export type TeamMentalityType = 'Tiki-Taka' | 'Gegenpressing' | 'Park the Bus' | 'Counter-Attack';
 
+// ── New types added in v2 overhaul ─────────────────────────────────────────
+
+export type PersonalityTrait =
+  | 'Leader'
+  | 'Ambitious'
+  | 'Loyal'
+  | 'Professional'
+  | 'Temperamental'
+  | 'Mercenary'
+  | 'Team Player'
+  | 'Star';
+
+export interface PlayerAmbition {
+  type: 'win_league' | 'score_goals' | 'appearances' | 'win_cup';
+  target: number;
+  current: number;
+  fulfilled: boolean;
+}
+
+export interface NotificationItem {
+  id: string;
+  type: 'transfer' | 'morale' | 'injury' | 'scout' | 'match' | 'board' | 'general';
+  title: string;
+  body: string;
+  timestamp: number;
+  read: boolean;
+}
+
+export interface MoraleEventOption {
+  label: string;
+  moraleEffect: number;
+  cost?: number;
+}
+
+export interface MoraleEvent {
+  playerId: string;
+  playerName: string;
+  currentMorale: number;
+  reason: string;
+  options: MoraleEventOption[];
+}
+
+export interface GoalReplay {
+  minute: number;
+  scorer: string;
+  assister?: string;
+  description: string;
+}
+
+export interface PostMatchAnalysis {
+  fixtureId: string;
+  homeClubId: string;
+  awayClubId: string;
+  homeScore: number;
+  awayScore: number;
+  playerRatings: Record<string, number>;
+  motm: string;
+  homeShots: number;
+  awayShots: number;
+  homeShotsOnTarget: number;
+  awayShotsOnTarget: number;
+  homePossession: number;
+  awayPossession: number;
+  homeFouls: number;
+  awayFouls: number;
+  highlightsText: string;
+  goalReplays: GoalReplay[];
+}
+
+export interface SeasonAward {
+  season: number;
+  goldenBoot: { name: string; club: string; goals: number };
+  goldenGlove: { name: string; club: string; saves: number };
+  bestYoungPlayer: { name: string; club: string; age: number; rating: number };
+  playerOfSeason: { name: string; club: string; avgRating: number };
+}
+
+export interface TransferRumour {
+  id: string;
+  playerId: string;
+  playerName: string;
+  playerRating: number;
+  fromClub: string;
+  toClub: string;
+  week: number;
+  status: 'rumour' | 'confirmed' | 'denied';
+}
+
 export interface PlayerAttributes {
   pace: number;
   shooting: number;
@@ -52,6 +140,15 @@ export interface Player {
   tournamentYellowCards?: number;
   tournamentRedCards?: number;
   tournamentSaves?: number;
+  // v2 fields
+  personality?: PersonalityTrait;
+  formStreak?: number;       // -5 to +5; positive = in form
+  injuryWeeksRemaining?: number;
+  injuryType?: string;
+  nationality?: string;
+  biography?: string;
+  ambition?: PlayerAmbition;
+  shirtNumber?: number;
 }
 
 export type PlaystyleType = 'Attacking' | 'Balanced' | 'Defending';
@@ -93,6 +190,14 @@ export interface Club {
   goalsAgainst: number;
   goalDifference: number;
   streak: ('W' | 'D' | 'L')[];
+  // v2 fields
+  reputation?: number;         // 0–100
+  wageBudget?: number;         // weekly max
+  wageSpend?: number;          // current weekly total
+  headToHead?: Record<string, { w: number; d: number; l: number }>;
+  kitPrimaryColor?: string;
+  kitSecondaryColor?: string;
+  prizeMoneyEarned?: number;
 }
 
 export interface MatchEvent {

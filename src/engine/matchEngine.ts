@@ -1,10 +1,11 @@
 import {
   Club,
-  Player,
   LiveMatchSimulation,
   MatchEvent,
   Fixture,
   LiveOdds,
+  PostMatchAnalysis,
+  GoalReplay,
 } from "../types";
 import { randRange } from "../data/names";
 
@@ -303,7 +304,15 @@ export function simulateTick(
       if (sim.weather === 'Heavy Rain') goalRollThreshold -= 8;
       if (sim.weather === 'Snow') goalRollThreshold -= 12;
       if (sim.weather === 'Extreme Heat') goalRollThreshold -= 4; // fatigue
-      
+
+      // Comeback mechanic: trailing team gets a boost in the last 6 ticks (mins ~72–90)
+      if (nextTick >= 24) {
+        const isTrailing = isHomePossession
+          ? sim.homeScore < sim.awayScore
+          : sim.awayScore < sim.homeScore;
+        if (isTrailing) goalRollThreshold += 8;
+      }
+
       const oppGK = getGK(opposingTeam);
       const opposingGKBonus = isHomePossession ? awayGKBonus : homeGKBonus;
       goalRollThreshold -=
@@ -354,24 +363,50 @@ export function simulateTick(
         ballX = 50;
         ballY = 50;
       } else if (shotRoll <= Math.max(28, goalRollThreshold + 32)) {
-        eventType = "shot_saved";
-        if (isHomePossession) sim.homeShotsOnTarget++;
-        else sim.awayShotsOnTarget++;
-
-        const isCup = sim.fixtureId.startsWith("cup-");
-        if (isCup) {
-          oppGK.tournamentSaves = (oppGK.tournamentSaves || 0) + 1;
+        // GK error: 3% chance they drop it and it becomes a goal
+        const gkErrorRoll = randRange(1, 100);
+        const gkErrorChance = oppGK.stamina < 40 ? 6 : 3;
+        if (gkErrorRoll <= gkErrorChance) {
+          // GK error — goal scored!
+          eventType = "goal";
+          if (isHomePossession) {
+            sim.homeScore++;
+            sim.homeShooters.push(shooter.name);
+            sim.homeShotsOnTarget++;
+          } else {
+            sim.awayScore++;
+            sim.awayShooters.push(shooter.name);
+            sim.awayShotsOnTarget++;
+          }
+          const isCup = sim.fixtureId.startsWith("cup-");
+          if (isCup) { shooter.tournamentGoals = (shooter.tournamentGoals || 0) + 1; }
+          else { shooter.goals++; }
+          shooter.morale = Math.min(100, shooter.morale + 10);
+          oppGK.morale = Math.max(0, oppGK.morale - 20);
+          commentaryText = `GOAL! Goalkeeper error! ${oppGK.name} fumbles a routine save and ${shooter.name} pounces on the loose ball!`;
+          currentZone = "MID";
+          ballX = 50;
+          ballY = 50;
         } else {
-          oppGK.saves = (oppGK.saves || 0) + 1;
-        }
-        oppGK.morale = Math.min(100, oppGK.morale + 5);
-        commentaryText = SHOT_SAVES[randRange(0, SHOT_SAVES.length - 1)]
-          .replace("{keeper}", oppGK.name)
-          .replace("{shooter}", shooter.name);
+          eventType = "shot_saved";
+          if (isHomePossession) sim.homeShotsOnTarget++;
+          else sim.awayShotsOnTarget++;
 
-        currentZone = "ATT";
-        ballX = isHomePossession ? 95 : 5;
-        ballY = Math.random() > 0.5 ? 90 : 10;
+          const isCup = sim.fixtureId.startsWith("cup-");
+          if (isCup) {
+            oppGK.tournamentSaves = (oppGK.tournamentSaves || 0) + 1;
+          } else {
+            oppGK.saves = (oppGK.saves || 0) + 1;
+          }
+          oppGK.morale = Math.min(100, oppGK.morale + 5);
+          commentaryText = SHOT_SAVES[randRange(0, SHOT_SAVES.length - 1)]
+            .replace("{keeper}", oppGK.name)
+            .replace("{shooter}", shooter.name);
+
+          currentZone = "ATT";
+          ballX = isHomePossession ? 95 : 5;
+          ballY = Math.random() > 0.5 ? 90 : 10;
+        }
       } else {
         commentaryText = SHOT_MISSES[
           randRange(0, SHOT_MISSES.length - 1)
@@ -615,6 +650,7 @@ export function runAssistantSubstitution(club: Club) {
   if (benchPlayers.length === 0) return;
 
   // Substitute up to 2 players maximum at half-time
+  // Substitute up to 2 players maximum at half-time
   const subsCount = Math.min(2, lowStaminaStarters.length, benchPlayers.length);
 
   for (let i = 0; i < subsCount; i++) {
@@ -645,24 +681,145 @@ export function calculatePreMatchOdds(
     Math.min(15.0, Math.max(1.05, 2.2 - diffStrength * 0.15)).toFixed(2),
   );
   const draw = parseFloat(
-    Math.min(6.5, Math.max(2.1, 3.2 - Math.abs(diffStrength) * 0.05)).toFixed(
-      2,
-    ),
+    Math.min(6.5, Math.max(2.1, 3.2 - Math.abs(diffStrength) * 0.05)).toFixed(2),
   );
   const awayWin = parseFloat(
     Math.min(15.0, Math.max(1.05, 2.6 + diffStrength * 0.15)).toFixed(2),
   );
-
   const over25 = parseFloat(
     Math.min(3.5, Math.max(1.3, 1.85 - diffStrength * 0.02)).toFixed(2),
   );
   const under25 = parseFloat(
     Math.min(3.5, Math.max(1.3, 1.9 + diffStrength * 0.02)).toFixed(2),
   );
-
   return { homeWin, draw, awayWin, over25, under25 };
 }
 
 export function quickSimulateFixture(homeClub: Club, awayClub: Club): Fixture {
   return simulateEntireMatch("dummy-id", homeClub, awayClub);
+}
+
+const GOAL_REPLAY_TEMPLATES = [
+  "{scorer} picks up the ball on the edge of the box and unleashes a thunderbolt into the top corner!",
+  "A perfectly-weighted through ball finds {scorer} in behind the last defender. One touch, and it's in the net!",
+  "{scorer} rises highest from a corner kick, powering a header past the goalkeeper!",
+  "Chaos in the box! The ball breaks to {scorer} who sweeps it home from close range!",
+  "{scorer} cuts inside, beats two defenders and curls a delicious effort into the far corner!",
+  "A quick counter-attack — {scorer} races clear and confidently chips the advancing keeper!",
+  "Penalty! {scorer} steps up, sends the goalkeeper the wrong way — GOAL!",
+  "{scorer} latches onto a deflected cross and volleys clinically into the bottom corner!",
+];
+
+const HIGHLIGHTS_OPENERS = [
+  "An enthralling contest as both sides created plenty of chances.",
+  "A captivating match that kept fans on the edge of their seats throughout.",
+  "Intensity from the first whistle, with both teams battling fiercely.",
+  "A closely-fought encounter that showcased the best of the beautiful game.",
+];
+const HIGHLIGHTS_MIDDLES = [
+  "{homeTeam} dominated the early exchanges before {awayTeam} found their footing.",
+  "Both sides traded blows with chances at either end throughout the 90 minutes.",
+  "{awayTeam} started brightly but {homeTeam} grew into the game as the half progressed.",
+  "The midfield battle proved crucial, with both managers making key tactical interventions.",
+];
+const HIGHLIGHTS_CLOSERS = [
+  "Ultimately the scoreline reflected the quality on show.",
+  "A deserved result, though the defeated side will feel they had enough chances.",
+  "The fans were treated to a memorable afternoon of football.",
+  "Both managers will have plenty to ponder ahead of the next fixture.",
+];
+
+export function generatePostMatchAnalysis(
+  sim: LiveMatchSimulation,
+  homeClub: Club,
+  awayClub: Club,
+): PostMatchAnalysis {
+  const playerRatings: Record<string, number> = {};
+  const allGoalReplays: GoalReplay[] = [];
+
+  const calcRating = (
+    p: { goals: number; assists: number; saves?: number; yellowCards: number; redCards: number },
+    isHome: boolean,
+  ): number => {
+    const diff = isHome ? sim.homeScore - sim.awayScore : sim.awayScore - sim.homeScore;
+    let r = 6.0 + diff * 0.3 + p.goals * 1.5 + p.assists * 0.8
+      + (p.saves || 0) * 0.25 - p.yellowCards * 0.5 - p.redCards * 2.0;
+    r += (Math.random() - 0.5) * 1.0;
+    return parseFloat(Math.min(10, Math.max(1, r)).toFixed(1));
+  };
+
+  homeClub.squad.forEach(p => {
+    if (p.isStarting) playerRatings[p.id] = calcRating(p, true);
+  });
+  awayClub.squad.forEach(p => {
+    if (p.isStarting) playerRatings[p.id] = calcRating(p, false);
+  });
+
+  let motmId = '';
+  let motmRating = -1;
+  const checkTeam = sim.homeScore !== sim.awayScore
+    ? (sim.homeScore > sim.awayScore ? homeClub : awayClub)
+    : homeClub;
+  checkTeam.squad.forEach(p => {
+    if (p.isStarting && (playerRatings[p.id] || 0) > motmRating) {
+      motmRating = playerRatings[p.id] || 0;
+      motmId = p.id;
+    }
+  });
+  if (!motmId) {
+    awayClub.squad.forEach(p => {
+      if (p.isStarting && (playerRatings[p.id] || 0) > motmRating) {
+        motmRating = playerRatings[p.id] || 0;
+        motmId = p.id;
+      }
+    });
+  }
+
+  let replayMinute = 5;
+  sim.events.forEach(ev => {
+    if (ev.type === 'goal') {
+      const minute = ev.minute || replayMinute;
+      replayMinute = minute + 3;
+      const scorer = ev.playerName || 'Unknown';
+      const template = GOAL_REPLAY_TEMPLATES[randRange(0, GOAL_REPLAY_TEMPLATES.length - 1)];
+      allGoalReplays.push({
+        minute,
+        scorer,
+        description: template.replace('{scorer}', scorer),
+      });
+    }
+  });
+
+  const pick = (arr: string[]) => arr[randRange(0, arr.length - 1)];
+  const highlightsText = [
+    pick(HIGHLIGHTS_OPENERS),
+    pick(HIGHLIGHTS_MIDDLES).replace('{homeTeam}', homeClub.name).replace('{awayTeam}', awayClub.name),
+    pick(HIGHLIGHTS_CLOSERS),
+  ].join(' ');
+
+  const totalPoss = (sim.homePossessionScore + sim.awayPossessionScore) || 1;
+  const homeFouls = sim.events.filter(e =>
+    e.teamId === homeClub.id && (e.type === 'foul' || e.type === 'yellow_card' || e.type === 'red_card')).length;
+  const awayFouls = sim.events.filter(e =>
+    e.teamId === awayClub.id && (e.type === 'foul' || e.type === 'yellow_card' || e.type === 'red_card')).length;
+
+  return {
+    fixtureId: sim.fixtureId,
+    homeClubId: sim.homeClubId,
+    awayClubId: sim.awayClubId,
+    homeScore: sim.homeScore,
+    awayScore: sim.awayScore,
+    playerRatings,
+    motm: motmId,
+    homeShots: sim.homeShots,
+    awayShots: sim.awayShots,
+    homeShotsOnTarget: sim.homeShotsOnTarget,
+    awayShotsOnTarget: sim.awayShotsOnTarget,
+    homePossession: Math.round((sim.homePossessionScore / totalPoss) * 100),
+    awayPossession: Math.round((sim.awayPossessionScore / totalPoss) * 100),
+    homeFouls,
+    awayFouls,
+    highlightsText,
+    goalReplays: allGoalReplays,
+  };
 }

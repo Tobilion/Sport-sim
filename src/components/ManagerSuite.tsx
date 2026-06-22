@@ -61,6 +61,7 @@ interface ManagerSuiteProps {
   onTogglePlayerFocus?: (playerId: string) => void;
   onAssignCoachToPlayer?: (playerId: string, coachId: string | null) => void;
   onBuyCoach?: (newCoach: Coach, cost: number) => void;
+  onDismissCoach?: (coachId: string, refundAmount: number) => void;
 }
 
 const DualStatProgress: React.FC<{ label: string; current: number; potential: number }> = ({ label, current, potential }) => {
@@ -111,6 +112,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   onTogglePlayerFocus,
   onAssignCoachToPlayer,
   onBuyCoach,
+  onDismissCoach,
 }) => {
   // Inner states
   const [activeSubTab, setActiveSubTab] = useState<
@@ -240,9 +242,129 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
     return list;
   }
 
+  // Refreshed market: better OVR floor, younger players + 1 Elite Free Agent special card
+  function generateRefreshedTransferMarket(): Player[] {
+    const list: Player[] = [];
+    const positions: ("GK" | "DEF" | "MID" | "ATT")[] = ["GK", "DEF", "MID", "ATT"];
+    const count = 20;
+    for (let i = 0; i < count; i++) {
+      const pos = positions[randRange(0, 3)];
+      const fName = FIRST_NAMES[randRange(0, FIRST_NAMES.length - 1)];
+      const lName = LAST_NAMES[randRange(0, LAST_NAMES.length - 1)];
+      // Higher floor OVR (75-95) and younger bias (19-27)
+      const rating = randRange(75, 95);
+      const age = randRange(19, 27);
+      const valFactor = Math.pow(rating - 55, 3.1) * 12500;
+      const calculatedValue = Math.round(valFactor / 50000) * 50000 + randRange(0, 4) * 15000;
+      list.push({
+        id: `refresh-player-${i}-${Date.now()}-${randRange(100, 999)}`,
+        name: `${fName} ${lName}`,
+        position: pos,
+        rating,
+        age,
+        potentialRating: Math.min(99, rating + randRange(3, 12)),
+        stamina: 100,
+        morale: 100,
+        goals: 0,
+        assists: 0,
+        yellowCards: 0,
+        redCards: 0,
+        matchRatings: [],
+        marketValue: calculatedValue > 100000 ? calculatedValue : randRange(200, 350) * 1000,
+        attributes: generatePlayerAttributes(pos, rating),
+        isStarting: false,
+      });
+    }
+    // Extra option: Elite Free Agent — young, high OVR, special badge
+    const elitePos = positions[randRange(0, 3)];
+    const eliteRating = randRange(85, 94);
+    const eliteFName = FIRST_NAMES[randRange(0, FIRST_NAMES.length - 1)];
+    const eliteLName = LAST_NAMES[randRange(0, LAST_NAMES.length - 1)];
+    list.push({
+      id: `elite-free-agent-${Date.now()}`,
+      name: `${eliteFName} ${eliteLName}`,
+      position: elitePos,
+      rating: eliteRating,
+      age: randRange(20, 24),
+      potentialRating: Math.min(99, eliteRating + randRange(4, 8)),
+      stamina: 100,
+      morale: 100,
+      goals: 0,
+      assists: 0,
+      yellowCards: 0,
+      redCards: 0,
+      matchRatings: [],
+      marketValue: Math.round(Math.pow(eliteRating - 55, 3.1) * 12500 / 50000) * 50000,
+      attributes: generatePlayerAttributes(elitePos, eliteRating),
+      isStarting: false,
+      isEliteFreeAgent: true,
+    } as Player & { isEliteFreeAgent?: boolean });
+    return list;
+  }
+
+  // Refreshed youth: higher current + potential + 1 Wonderkid Sensation
+  function generateRefreshedYouthList(): Player[] {
+    const list: Player[] = [];
+    for (let i = 0; i < 6; i++) {
+      const y = generateWonderkid(`youth-refresh-${Date.now()}-${i}`, true);
+      // Boost current rating and potential
+      const boostedRating = Math.min(72, y.rating + randRange(4, 10));
+      const boostedPot = Math.min(96, (y.potentialRating || 88) + randRange(3, 8));
+      list.push({ ...y, rating: boostedRating, potentialRating: boostedPot });
+    }
+    // Extra: Wonderkid Sensation — very young, high potential
+    const sensation = generateWonderkid(`wonderkid-sensation-${Date.now()}`, true);
+    list.push({
+      ...sensation,
+      id: `wonderkid-sensation-${Date.now()}`,
+      age: randRange(15, 17),
+      rating: randRange(65, 72),
+      potentialRating: randRange(91, 96),
+      isWonderkidSensation: true,
+    } as Player & { isWonderkidSensation?: boolean });
+    return list;
+  }
+
+  // Refreshed coaches: higher rating floor + 1 Legendary Coach
+  function generateRefreshedCoachList(): Coach[] {
+    const list: Coach[] = [];
+    for (let i = 0; i < 5; i++) {
+      const base = generateUniqueCoach(50 + i + Date.now() % 100);
+      // Boost rating to 78-92 range
+      const boostedRating = randRange(78, 92);
+      list.push({ ...base, id: `refreshed-coach-${i}-${Date.now()}`, rating: boostedRating, cost: boostedRating * 1000 * randRange(8, 12) });
+    }
+    // Extra: Legendary Coach — exceptional rating 89-96
+    const legendary = generateUniqueCoach(99);
+    const legendaryRating = randRange(89, 96);
+    list.push({
+      ...legendary,
+      id: `legendary-coach-${Date.now()}`,
+      name: `Head Coach ${FIRST_NAMES[randRange(0, FIRST_NAMES.length - 1)]} ${LAST_NAMES[randRange(0, LAST_NAMES.length - 1)]}`,
+      rating: legendaryRating,
+      cost: legendaryRating * 1000 * randRange(14, 20),
+      isLegendary: true,
+    } as Coach & { isLegendary?: boolean });
+    return list;
+  }
+
   const handleRefreshScouting = () => {
-    setScoutedTransferList(generateInitialTransferMarket());
-    showMessage("Scouted fresh elite players on the free transfer list!");
+    if (transferSegment === "PLAYERS") {
+      setScoutedTransferList(generateRefreshedTransferMarket());
+      showMessage("🔄 Refreshed: Better-rated younger players + 1 Elite Free Agent unlocked!");
+    } else if (transferSegment === "YOUTH") {
+      setScoutedYouthList(generateRefreshedYouthList());
+      showMessage("🔄 Refreshed: Higher-potential youth targets + 1 Wonderkid Sensation found!");
+    } else if (transferSegment === "COACHES") {
+      setScoutedCoachList(generateRefreshedCoachList());
+      showMessage("🔄 Refreshed: Top-tier coaches available + 1 Legendary Manager on the market!");
+    }
+  };
+
+  const handleDismissCoach = (coachId: string, coachCost: number) => {
+    const refund = Math.round(coachCost * 0.4);
+    onDismissCoach?.(coachId, refund);
+    showMessage(`Coach dismissed. $${refund.toLocaleString()} compensation refunded to your balance.`);
   };
 
   const showMessage = (msg: string) => {
@@ -936,12 +1058,18 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                     item.marketValue * (1 - managerSkills.negotiator * 0.05)
                   );
                   const isSpecialYouth = item.age && item.age < 21;
+                  const isEliteFreeAgent = (item as Player & { isEliteFreeAgent?: boolean }).isEliteFreeAgent;
 
                   return (
                     <div
                       key={item.id}
-                      className="bg-gradient-to-b from-[#121620] to-[#0c0f16] border border-white/10 rounded-2xl p-4.5 flex flex-col justify-between hover:border-sky-500/50 hover:shadow-[0_0_15px_rgba(14,165,233,0.1)] transition-all duration-300 relative group shadow-lg"
+                      className={`bg-gradient-to-b from-[#121620] to-[#0c0f16] border rounded-2xl p-4.5 flex flex-col justify-between transition-all duration-300 relative group shadow-lg ${isEliteFreeAgent ? "border-amber-500/50 hover:border-amber-400 hover:shadow-[0_0_20px_rgba(245,158,11,0.2)]" : "border-white/10 hover:border-sky-500/50 hover:shadow-[0_0_15px_rgba(14,165,233,0.1)]"}`}
                     >
+                      {isEliteFreeAgent && (
+                        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[8px] font-black uppercase tracking-widest px-3 py-0.5 rounded-full shadow-lg whitespace-nowrap">
+                          ⭐ ELITE FREE AGENT
+                        </div>
+                      )}
                       <div>
                         <div className="flex justify-between items-start mb-2.5">
                           <div className="flex flex-col gap-1 items-start">
@@ -969,9 +1097,13 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
 
                         {/* Special Tags for recruitment */}
                         <div className="mb-2">
-                          {isSpecialYouth ? (
+                          {isEliteFreeAgent ? (
+                            <span className="text-[8px] bg-amber-950/80 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wider inline-block">
+                              ⭐ ELITE FREE AGENT
+                            </span>
+                          ) : isSpecialYouth ? (
                             <span className="text-[8px] bg-cyan-950/80 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wider inline-block">
-                              ⭐ ELITE YOUTH PROSPECT
+                              🔥 ELITE YOUTH PROSPECT
                             </span>
                           ) : (
                             <span className="text-[8px] bg-slate-850 text-slate-400 border border-white/5 px-2 py-0.5 rounded font-bold uppercase tracking-wider inline-block">
@@ -1070,18 +1202,24 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                   const currentPace = y.attributes?.pace || y.rating;
                   const currentShooting = y.attributes?.shooting || y.rating;
                   const currentPassing = y.attributes?.passing || y.rating;
+                  const isWonderkidSensation = (y as Player & { isWonderkidSensation?: boolean }).isWonderkidSensation;
 
                   return (
                     <div
                       key={y.id}
-                      className="bg-[#121620]/80 border border-white/10 rounded-2xl p-5 flex flex-col justify-between hover:border-emerald-500/50 hover:shadow-[0_0_15px_rgba(16,185,129,0.08)] transition-all duration-300 relative shadow-lg"
+                      className={`bg-[#121620]/80 border rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 relative shadow-lg ${isWonderkidSensation ? "border-amber-500/50 hover:border-amber-400 hover:shadow-[0_0_20px_rgba(245,158,11,0.2)]" : "border-white/10 hover:border-emerald-500/50 hover:shadow-[0_0_15px_rgba(16,185,129,0.08)]"}`}
                     >
+                      {isWonderkidSensation && (
+                        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[8px] font-black uppercase tracking-widest px-3 py-0.5 rounded-full shadow-lg whitespace-nowrap">
+                          ✨ WONDERKID SENSATION
+                        </div>
+                      )}
                       <div>
                         {/* Tag & rating row */}
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex flex-col gap-1 items-start">
-                            <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-black px-2.5 py-0.5 rounded uppercase tracking-wider">
-                              🔥 YOUTH PROSPECT
+                            <span className={`text-[8px] font-black px-2.5 py-0.5 rounded uppercase tracking-wider ${isWonderkidSensation ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"}`}>
+                              {isWonderkidSensation ? "🌟 WONDERKID SENSATION" : "🔥 YOUTH PROSPECT"}
                             </span>
                             <span className="text-xs text-sky-400 font-bold mt-1 uppercase">
                               {y.position} • Age {y.age}
@@ -1142,18 +1280,24 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                 scoutedCoachList.map((c) => {
                   const discountMultiplier = 1 - managerSkills.negotiator * 0.05;
                   const discountedPrice = Math.round(c.cost * discountMultiplier);
+                  const isLegendary = (c as Coach & { isLegendary?: boolean }).isLegendary;
 
                   return (
                     <div
                       key={c.id}
-                      className="bg-[#121620]/80 border border-white/10 rounded-2xl p-5 flex flex-col justify-between hover:border-purple-500/50 hover:shadow-[0_0_15px_rgba(168,85,247,0.08)] transition-all duration-300 relative shadow-lg"
+                      className={`bg-[#121620]/80 border rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 relative shadow-lg ${isLegendary ? "border-amber-500/50 hover:border-amber-400 hover:shadow-[0_0_20px_rgba(245,158,11,0.2)]" : "border-white/10 hover:border-purple-500/50 hover:shadow-[0_0_15px_rgba(168,85,247,0.08)]"}`}
                     >
+                      {isLegendary && (
+                        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-amber-500 text-black text-[8px] font-black uppercase tracking-widest px-3 py-0.5 rounded-full shadow-lg whitespace-nowrap">
+                          👑 LEGENDARY MANAGER
+                        </div>
+                      )}
                       <div>
                         {/* Coach specialization header */}
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex flex-col gap-1 items-start">
-                            <span className="text-[8px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2.5 py-0.5 rounded font-black uppercase tracking-wider">
-                              💼 COACH SPECIALIST
+                            <span className={`text-[8px] px-2.5 py-0.5 rounded font-black uppercase tracking-wider ${isLegendary ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-purple-500/20 text-purple-300 border border-purple-500/30"}`}>
+                              {isLegendary ? "👑 LEGENDARY MANAGER" : "💼 COACH SPECIALIST"}
                             </span>
                             <span className="text-[11px] text-sky-400 font-bold mt-1 uppercase">
                               {c.specialty} Specialty
@@ -1536,17 +1680,26 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                   {userClub.coaches.map((c, idx) => (
                     <div
                       key={`${c.id}-${idx}`}
-                      className="bg-sky-950/20 border border-sky-500/20 p-3 rounded-xl flex flex-col items-center justify-center text-center"
+                      className="bg-sky-950/20 border border-sky-500/20 p-3 rounded-xl flex flex-col items-center justify-center text-center gap-2"
                     >
-                      <div className="font-bold text-white text-sm mb-1">
+                      <div className="font-bold text-white text-sm">
                         {c.name}
                       </div>
                       <div className="text-[10px] text-sky-400 uppercase tracking-widest">
                         {c.specialty} Coach
                       </div>
-                      <div className="text-xs font-mono text-amber-500 font-bold mt-1">
+                      <div className="text-xs font-mono text-amber-500 font-bold">
                         RATING {c.rating}
                       </div>
+                      <div className="text-[9px] text-slate-500 font-mono">
+                        Dismissal refund: <span className="text-emerald-400">${Math.round(c.cost * 0.4).toLocaleString()}</span>
+                      </div>
+                      <button
+                        onClick={() => handleDismissCoach(c.id, c.cost)}
+                        className="mt-1 w-full py-1.5 bg-rose-500/10 hover:bg-rose-500 border border-rose-500/20 hover:border-rose-400 text-rose-400 hover:text-black font-black text-[9px] uppercase tracking-wider rounded-lg transition-all cursor-pointer"
+                      >
+                        DISMISS
+                      </button>
                     </div>
                   ))}
                 </div>

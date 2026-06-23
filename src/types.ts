@@ -134,12 +134,16 @@ export interface Player {
   attributes: PlayerAttributes;
   isStarting: boolean; // Managed by team sheet for lineups
   trainingProgress?: number; // 0 to 100
-  saves?: number;
+  saves: number; // GK saves (required, default 0)
+  fatigue?: number; // 0-100 (100 = fully rested)
+  disciplinaryRecord?: { yellowCards: number; redCards: number; suspensionGamesRemaining: number };
   tournamentGoals?: number;
   tournamentAssists?: number;
   tournamentYellowCards?: number;
   tournamentRedCards?: number;
   tournamentSaves?: number;
+  appearances?: number;
+  developmentLog?: { week: number; changes: Record<string, number> }[];
   // v2 fields
   personality?: PersonalityTrait;
   formStreak?: number;       // -5 to +5; positive = in form
@@ -153,13 +157,36 @@ export interface Player {
 
 export type PlaystyleType = 'Attacking' | 'Balanced' | 'Defending';
 
+export type CoachSpeciality =
+  | 'Head Coach (Tactics)'
+  | 'Assistant Manager'
+  | 'Attacking Coach'
+  | 'Defending Coach'
+  | 'Goalkeeping Coach'
+  | 'Set Pieces Coach'
+  | 'Fitness & Conditioning Coach'
+  | 'Youth Development Coach'
+  | 'Pressing & Transition Coach'
+  | 'Psychological Coach'
+  | 'Medical Officer'
+  | 'Chief Scout'
+  | 'Data Analyst'
+  // Legacy values kept for compatibility
+  | 'Defending' | 'Attacking' | 'Youth' | 'Tactics' | 'Fitness' | 'Goalkeeping' | 'Set Pieces' | 'Corners' | 'Development';
+
 export interface Coach {
   id: string;
   name: string;
   age: number;
-  specialty: 'Defending' | 'Attacking' | 'Youth' | 'Tactics' | 'Fitness' | 'Goalkeeping' | 'Set Pieces' | 'Corners' | 'Development' | string;
-  rating: number; // 70 to 95
+  nationality?: string;
+  specialty: CoachSpeciality | string;
+  rating: number; // 1 to 100
   preferredMentality?: TeamMentalityType;
+  preferredPlaystyle?: string;
+  personality?: string;
+  wage?: number;
+  contractLength?: number;
+  bio?: string;
   cost: number;
 }
 
@@ -179,6 +206,7 @@ export interface Club {
   tacticsFacilities: number;   // up to lvl 5 (Increases tactical pass modifier)
   cardioFacilities: number;    // up to lvl 5 (Reduces stamina drain)
   medicalFacilities: number;   // up to lvl 5 (Heals stamina after matches faster)
+  accommodationFacilities?: number; // up to lvl 5 (30/35/40/45/50 squad cap)
   coach: Coach;
   coaches?: Coach[];
   points: number;
@@ -267,6 +295,8 @@ export interface Fixture {
   awayShots?: number;
   homeShotsOnTarget?: number;
   awayShotsOnTarget?: number;
+  homePens?: number;
+  awayPens?: number;
 }
 
 export interface BracketNode {
@@ -281,6 +311,15 @@ export interface BracketNode {
   awayPens?: number;
   isCompleted: boolean;
   winnerClubId?: string;
+  // Match stats (optional — populated after simulation)
+  homeGoalsDetail?: string[];
+  awayGoalsDetail?: string[];
+  homePossession?: number;
+  awayPossession?: number;
+  homeShots?: number;
+  awayShots?: number;
+  homeShotsOnTarget?: number;
+  awayShotsOnTarget?: number;
 }
 
 export interface TransferPlayer {
@@ -368,6 +407,3 @@ export interface TrophyRecord {
   goldenGloveClub: string;
   goldenGloveSaves: number;
 }
-
-
-

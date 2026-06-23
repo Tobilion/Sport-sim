@@ -49,7 +49,7 @@ export const DUAL_SCHEDULE = [
 interface NextMatchProps {
   userClub: Club;
   allClubs: Club[];
-  campaignType: 'league' | 'dual';
+  campaignType: 'league' | 'dual' | 'cup';
   currentWeek: number;
   currentCupRound: string;
   leagueFixtures: Fixture[];
@@ -189,7 +189,7 @@ export const NextMatch: React.FC<NextMatchProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 bg-[#0c0f16] border border-white/5 p-3 rounded-xl min-w-[260px] md:min-w-0">
+        <div className="flex items-center gap-3 bg-[#0c0f16] border border-white/5 p-3 rounded-xl flex-1 md:flex-none">
           <Activity className="w-5 h-5 text-emerald-400" />
           <div className="text-left text-xs">
             <span className="text-[9px] text-slate-500 uppercase font-mono block font-bold">Timeline Agenda Theme</span>
@@ -368,9 +368,13 @@ export const NextMatch: React.FC<NextMatchProps> = ({
               ) : (
                 <div className="mt-5 bg-slate-950/55 p-3 rounded-xl border border-white/5 text-center">
                   <span className="text-[9px] text-slate-400 font-mono uppercase leading-normal">
-                    {isLeagueWeek && isLeagueWeekMatchDone 
-                      ? '✓ Week assignment complete. Awaiting cycle advance.' 
-                      : `🔒 Active League Match is locked (Wait for Week ${nextLeagueMatch?.week})`}
+                    {isLeagueWeekMatchDone && !userLeagueMatchThisWeek
+                      ? `📅 No league match scheduled for Week ${currentWeek}. Advance week to proceed.`
+                      : isLeagueWeek && isLeagueWeekMatchDone
+                        ? '✓ Week assignment complete. Awaiting cycle advance.'
+                        : nextLeagueMatch && nextLeagueMatch.week !== currentWeek
+                          ? `📅 Next league match is in Week ${nextLeagueMatch.week}. Advance week to reach it.`
+                          : `🔒 League match locked — advance week to unlock.`}
                   </span>
                 </div>
               )}
@@ -565,9 +569,13 @@ export const NextMatch: React.FC<NextMatchProps> = ({
               ) : campaignType === 'dual' ? (
                 <div className="mt-5 bg-slate-950/55 p-3 rounded-xl border border-white/5 text-center">
                   <span className="text-[9px] text-slate-400 font-mono uppercase leading-normal">
-                    {!isLeagueWeek && isTournamentWeekMatchDone 
-                      ? '✓ Week assignment complete. Awaiting cycle advance.' 
-                      : `🔒 Active tournament Match is locked (Wait for scheduled Cup Week ${getNextTournamentWeek()})`}
+                    {isTournamentWeekMatchDone && !userTournamentMatchThisWeek
+                      ? `📅 No cup match this week. Advance week to continue.`
+                      : !isLeagueWeek && isTournamentWeekMatchDone
+                        ? '✓ Week assignment complete. Awaiting cycle advance.'
+                        : getNextTournamentWeek() !== currentWeek
+                          ? `📅 Next cup match is Week ${getNextTournamentWeek()}. Advance week to reach it.`
+                          : `🔒 Cup match locked — advance week to unlock.`}
                   </span>
                 </div>
               ) : null}
@@ -660,8 +668,8 @@ export const NextMatch: React.FC<NextMatchProps> = ({
                       </div>
                       <div className="flex flex-col items-end">
                         <span className="text-[7px] text-slate-500 font-bold uppercase leading-none">Stamina</span>
-                        <span className={`text-[10px] font-black mt-0.5 ${p.stamina < 55 ? 'text-red-400 font-bold' : 'text-emerald-400'}`}>
-                          {Math.round(p.stamina)}%
+                        <span className={`text-[10px] font-black mt-0.5 ${p.stamina < 55 ? 'text-red-400' : p.stamina < 75 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {p.stamina.toFixed(0)}
                         </span>
                       </div>
                     </div>
@@ -670,16 +678,14 @@ export const NextMatch: React.FC<NextMatchProps> = ({
               </div>
             </div>
 
-            <div className="pt-4 border-t border-white/5 text-center">
-              <p className="text-[10px] text-slate-500">
-                Need squad rotations, injury treatments, or tactics shifts? Go adjust your lineup inside the <strong className="text-white">Manager Suite</strong> workspace tab.
-              </p>
+            <div className="mt-4 pt-3 border-t border-white/5">
+              <div className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                {starters.length} starters selected • {userClub.squad.filter(p => !p.isStarting).length} on bench
+              </div>
             </div>
           </div>
         </div>
-
       </div>
-
     </div>
   );
 };

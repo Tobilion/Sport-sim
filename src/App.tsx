@@ -69,12 +69,23 @@ import {
   quickSimulateFixture,
   generatePostMatchAnalysis,
 } from "./engine/matchEngine";
+import {
+  processWeeklyDevelopment,
+  processYouthGraduation,
+} from "./engine/weeklyDevelopment";
+import {
+  getTransferMarketPool,
+  getYouthMarketPool,
+  getHireableCoaches,
+  generateStartingYouthAcademy,
+} from "./data/transferMarket";
 
 import { MatchCenter } from "./components/MatchCenter";
 import { LeagueTable } from "./components/LeagueTable";
 import { CupBracket } from "./components/CupBracket";
 import { ManagerSuite } from "./components/ManagerSuite";
 import { PlayerDossierModal } from "./components/PlayerDossierModal";
+import { MoraleEventModal } from "./components/MoraleEventModal";
 import { ClubDossierModal } from "./components/ClubDossierModal";
 import { SeasonReviewModal } from "./components/SeasonReviewModal";
 import { NextMatch } from "./components/NextMatch";
@@ -539,6 +550,9 @@ export default function App() {
   // v2: Post-match analysis modal
   const [postMatchAnalysis, setPostMatchAnalysis] = useState<PostMatchAnalysis | null>(null);
 
+  // Morale event queue — shown one at a time after weekly advance
+  const [pendingMoraleEvents, setPendingMoraleEvents] = useState<import("./types").Player[]>([]);
+
   // v2: Media pressure (consecutive losses)
   const [consecutiveLosses, setConsecutiveLosses] = useState<number>(0);
   const [showPressureModal, setShowPressureModal] = useState<boolean>(false);
@@ -811,16 +825,20 @@ export default function App() {
       streak: [],
       squad: [],
       coach: {
+        id: "coach-placeholder",
         name: "Placeholder Coach",
+        age: 45,
         nationality: "N/A",
-        specialty: "Tactics" as any,
+        specialty: "Tactics",
         rating: 50,
+        cost: 0,
       },
       mentality: "Balanced" as TeamMentalityType,
       trainingFacilities: 1,
       tacticsFacilities: 1,
       cardioFacilities: 1,
       medicalFacilities: 1,
+      accommodationFacilities: 1,
     };
 
   // Core Simulation clock ticks
@@ -1220,7 +1238,7 @@ export default function App() {
 
   // Upgrades
   const handleUpgradeFacilities = (
-    facilityType: "training" | "tactics" | "cardio" | "medical",
+    facilityType: "training" | "tactics" | "cardio" | "medical" | "accommodation",
     cost: number,
   ) => {
     if (userBalance < cost) return;
@@ -1280,6 +1298,28 @@ export default function App() {
       undefined,
       nextBalance,
     );
+  };
+
+  const handleTakeoverClub = (clubId: string) => {
+    const target = allClubs.find(c => c.id === clubId);
+    if (!target) return;
+    const cost = Math.round((target.reputation ?? 50) * 50000);
+    setUserBalance(prev => prev - cost);
+    setUserClubId(clubId);
+    addNotification({
+      type: 'general',
+      title: 'Club Takeover',
+      body: `You are now managing ${target.name}! Cost: $${cost.toLocaleString()}`,
+    });
+  };
+
+  const handleSellYouth = (playerId: string, fee: number) => {
+    setAllClubs(prev => prev.map(c => {
+      if (c.id !== userClubId) return c;
+      return { ...c, youthSquad: (c.youthSquad || []).filter(p => p.id !== playerId) };
+    }));
+    setUserBalance(prev => prev + fee);
+    addNotification({ type: 'transfer', title: 'Youth Sold', body: `Youth player sold for $${fee.toLocaleString()}` });
   };
 
   const handlePromoteYouth = (playerId: string) => {
@@ -1542,7 +1582,7 @@ export default function App() {
     runAssistantSubstitution(h);
     runAssistantSubstitution(a);
 
-    const fixtureObject = quickSimulateFixture(h, a);
+    const fixtureObject = quickSimulateFixture(h, a, activeSimulation.fixtureId);
 
     const mockFinalSim: LiveMatchSimulation = {
       ...activeSimulation,
@@ -1572,7 +1612,7 @@ export default function App() {
     runAssistantSubstitution(h);
     runAssistantSubstitution(a);
 
-    const fixtureObject = quickSimulateFixture(h, a);
+    const fixtureObject = quickSimulateFixture(h, a, fixtureId);
     const weekInfo = DUAL_SCHEDULE.find((s) => s.week === currentWeek);
 
     const mockLiveSim: LiveMatchSimulation = {
@@ -1903,38 +1943,133 @@ export default function App() {
       });
     });
 
-    // Generate News
+    // ── Rich procedural news generation ────────────────────────────────────
     const newNewsItems: NewsItem[] = [];
-    if (Math.random() > 0.5) {
-      const randClub = updatedClubs[randRange(0, updatedClubs.length - 1)];
-      const wonRecent = randClub.streak[randClub.streak.length - 1] === "W";
-      if (wonRecent) {
-        newNewsItems.push({
-          id: `news-${Date.now()}-${randRange(100, 999)}`,
-          week: currentWeek,
-          type: "match",
-          headline: `${randClub.name} Fans Ecstatic After Massive Weekend Win!`,
-        });
-      } else {
-        newNewsItems.push({
-          id: `news-${Date.now()}-${randRange(100, 999)}`,
-          week: currentWeek,
-          type: "general",
-          headline: `Manager Under Pressure After ${randClub.name} Fail To Deliver`,
-        });
+    const mkId = () => `news-${Date.now()}-${randRange(100,9999)}`;
+    const sortedTable = [...updatedClubs].sort((a,b) => b.won*3+b.drawn - (a.won*3+a.drawn));
+
+    // 1. Form headlines from completed fixtures this week
+    updatedClubs.forEach(club => {
+      const lastResult = club.streak[club.streak.length - 1];
+      const recentStreak = club.streak.slice(-3).join('');
+      if (Math.random() > 0.82) {
+        if (recentStreak === 'WWW') {
+          newNewsItems.push({ id: mkId(), week: currentWeek, type: 'match',
+            headline: `🔥 ${club.name} On Fire — Three Consecutive Wins Has Fans Dreaming Of Glory!` });
+        } else if (recentStreak === 'LLL') {
+          newNewsItems.push({ id: mkId(), week: currentWeek, type: 'general',
+            headline: `⚠️ Crisis at ${club.name} — Three Straight Defeats Piles Pressure On The Dugout` });
+        } else if (lastResult === 'W') {
+          newNewsItems.push({ id: mkId(), week: currentWeek, type: 'match',
+            headline: `✅ ${club.name} Pick Up Vital Three Points In Tense Encounter` });
+        } else if (lastResult === 'L') {
+          newNewsItems.push({ id: mkId(), week: currentWeek, type: 'general',
+            headline: `📉 ${club.name} Suffer Defeat — Questions Being Asked In The Boardroom` });
+        }
+      }
+    });
+
+    // 2. League table story
+    if (Math.random() > 0.65) {
+      const leader = sortedTable[0];
+      const second = sortedTable[1];
+      if (leader) {
+        newNewsItems.push({ id: mkId(), week: currentWeek, type: 'match',
+          headline: `🏆 League Update: ${leader.name} Top The Table With ${leader.won*3+leader.drawn} Points — ${second?.name ?? 'Rivals'} Give Chase` });
       }
     }
-    if (Math.random() > 0.7) {
-      const randClub = updatedClubs[randRange(0, updatedClubs.length - 1)];
-      const randPlayer =
-        randClub.squad[randRange(0, randClub.squad.length - 1)];
-      newNewsItems.push({
-        id: `news-${Date.now()}-${randRange(100, 999)}`,
-        week: currentWeek,
-        type: "injury",
-        headline: `Injury Blow For ${randClub.name}: ${randPlayer.name} Limps Off The Pitch.`,
-      });
+
+    // 3. Relegation zone story
+    if (Math.random() > 0.7 && sortedTable.length >= 3) {
+      const bottom = sortedTable[sortedTable.length - 1];
+      newNewsItems.push({ id: mkId(), week: currentWeek, type: 'general',
+        headline: `🔴 Relegation Battle: ${bottom.name} Sit Rock Bottom — Time Running Out For A Turnaround` });
     }
+
+    // 4. Transfer rumour
+    if (Math.random() > 0.6) {
+      const club1 = updatedClubs[randRange(0, updatedClubs.length - 1)];
+      const club2 = updatedClubs[randRange(0, updatedClubs.length - 1)];
+      const star = club1.squad.sort((a,b) => b.rating - a.rating)[0];
+      if (star && club1.id !== club2.id) {
+        newNewsItems.push({ id: mkId(), week: currentWeek, type: 'transfer',
+          headline: `💬 Transfer Whispers: ${club2.name} Reportedly Eyeing A Move For ${star.name} (${club1.name})` });
+      }
+    }
+
+    // 5. Player milestone
+    if (Math.random() > 0.75) {
+      const featuredClub = updatedClubs[randRange(0, updatedClubs.length - 1)];
+      const scorer = [...featuredClub.squad].sort((a,b) => b.goals - a.goals)[0];
+      if (scorer && scorer.goals >= 5) {
+        newNewsItems.push({ id: mkId(), week: currentWeek, type: 'match',
+          headline: `⚽ ${scorer.name} (${featuredClub.name}) Hits ${scorer.goals} Goals This Season — Leading The Golden Boot Race` });
+      }
+    }
+
+    // 6. Random injury at another club
+    if (Math.random() > 0.7) {
+      const club = updatedClubs.filter(c => c.id !== userClubId)[randRange(0, updatedClubs.length - 2)];
+      if (club) {
+        const victim = club.squad[randRange(0, club.squad.length - 1)];
+        newNewsItems.push({ id: mkId(), week: currentWeek, type: 'injury',
+          headline: `🏥 Injury Setback For ${club.name}: ${victim.name} Faces Spell On Sidelines` });
+      }
+    }
+
+    // 7. Young talent story
+    if (Math.random() > 0.8) {
+      const club = updatedClubs[randRange(0, updatedClubs.length - 1)];
+      const youngster = club.squad.filter(p => p.age <= 21).sort((a,b) => b.rating - a.rating)[0];
+      if (youngster) {
+        newNewsItems.push({ id: mkId(), week: currentWeek, type: 'general',
+          headline: `🌟 Wonderkid Watch: ${youngster.name} (${youngster.age}) Of ${club.name} Tipped For A Huge Future` });
+      }
+    }
+
+    // 8. User club headline (always include one about user's team)
+    const userClubState = updatedClubs.find(c => c.id === userClubId);
+    if (userClubState) {
+      const pos = sortedTable.findIndex(c => c.id === userClubId) + 1;
+      newNewsItems.push({ id: mkId(), week: currentWeek, type: 'match',
+        headline: `📊 ${userClubState.name} Sit ${pos === 1 ? 'Top Of The League' : pos <= 3 ? `${pos}nd In The Table — European Contention` : pos >= sortedTable.length - 2 ? 'In The Danger Zone — Action Needed' : `${pos}th — Mid-Table Stability`}` });
+    }
+
+    // ── Weekly development processing for all clubs ──────────────────────
+    updatedClubs = updatedClubs.map(club => {
+      const isUser = club.id === userClubId;
+      const devResult = processWeeklyDevelopment(club, currentWeek, isUser);
+      if (isUser && devResult.events.length > 0) {
+        devResult.events.forEach(ev => {
+          if (ev.type === 'injury') {
+            newNewsItems.push({
+              id: `dev-${ev.playerId}-${Date.now()}`,
+              week: currentWeek,
+              type: 'injury',
+              headline: ev.message,
+            });
+          } else if (ev.type === 'growth' || ev.type === 'potential_unlock') {
+            newNewsItems.push({
+              id: `dev-${ev.playerId}-${Date.now()}`,
+              week: currentWeek,
+              type: 'general',
+              headline: ev.message,
+            });
+          }
+        });
+        // Collect low-morale players for the decision modal
+        const unrestPlayers = devResult.updatedClub.squad.filter(p => (p.morale ?? 70) < 40);
+        if (unrestPlayers.length > 0) {
+          setPendingMoraleEvents(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            return [...prev, ...unrestPlayers.filter(p => !existingIds.has(p.id))];
+          });
+        }
+      }
+      // Youth graduation: any youth player aged 18+ can move to first team
+      const { club: clubAfterGrad } = processYouthGraduation(devResult.updatedClub);
+      return clubAfterGrad;
+    });
 
     const nextWeek = currentWeek + 1;
     let nextNews = [...newNewsItems, ...newsFeed].slice(0, 30); // Keep max 30 news
@@ -2126,7 +2261,7 @@ export default function App() {
           pendingGroup.forEach((match) => {
             const mHome = updatedClubs.find((c) => c.id === match.homeClubId)!;
             const mAway = updatedClubs.find((c) => c.id === match.awayClubId)!;
-            const res = quickSimulateFixture(mHome, mAway);
+            const res = quickSimulateFixture(mHome, mAway, match.id);
 
             match.isCompleted = true;
             match.homeScore = res.homeScore;
@@ -2165,7 +2300,7 @@ export default function App() {
           pendingNodes.forEach((match) => {
             const mHome = updatedClubs.find((c) => c.id === match.homeClubId)!;
             const mAway = updatedClubs.find((c) => c.id === match.awayClubId)!;
-            const res = quickSimulateFixture(mHome, mAway);
+            const res = quickSimulateFixture(mHome, mAway, `cup-bracket-${match.id}`);
 
             let matchWinner =
               res.homeScore > res.awayScore ? mHome.id : mAway.id;
@@ -2271,7 +2406,35 @@ export default function App() {
   };
 
   // Dossier Helpers
-  const handleOpenPlayerDossier = (id: string) => {
+  // Morale decision handler — resolves top pending morale event
+  const handleMoraleDecision = (choice: "start" | "wage" | "train" | "list") => {
+    const player = pendingMoraleEvents[0];
+    if (!player) return;
+
+    setAllClubs(prev => prev.map(club => {
+      if (club.id !== userClubId) return club;
+      const updatedSquad = club.squad.map(p => {
+        if (p.id !== player.id) return p;
+        let moraleDelta = 0;
+        if (choice === "start") moraleDelta = 15;
+        else if (choice === "wage") moraleDelta = 20;
+        else if (choice === "train") moraleDelta = -5;
+        else if (choice === "list") moraleDelta = 0; // stabilise at 45
+
+        const newMorale = choice === "list" ? 45 : Math.min(100, Math.max(0, (p.morale ?? 70) + moraleDelta));
+        return { ...p, morale: newMorale };
+      });
+      return { ...club, squad: updatedSquad };
+    }));
+
+    if (choice === "wage") {
+      setUserBalance(prev => prev - 2000);
+    }
+    // Dismiss the event
+    setPendingMoraleEvents(prev => prev.slice(1));
+  };
+
+    const handleOpenPlayerDossier = (id: string) => {
     setActivePlayerDossierId(id);
     setActiveClubDossierId(null);
   };
@@ -2281,12 +2444,14 @@ export default function App() {
     setActivePlayerDossierId(null);
   };
 
-  // Find referenced models for Dossier Modal
+  // Find referenced models for Dossier Modal — searches squad + youth + market
   const getDossierPlayerModel = (): Player | null => {
     if (!activePlayerDossierId) return null;
     for (const club of allClubs) {
-      const match = club.squad.find((p) => p.id === activePlayerDossierId);
-      if (match) return match;
+      const inSquad = club.squad.find((p) => p.id === activePlayerDossierId);
+      if (inSquad) return inSquad;
+      const inYouth = (club.youthSquad || []).find((p) => p.id === activePlayerDossierId);
+      if (inYouth) return inYouth;
     }
     return null;
   };
@@ -2424,7 +2589,7 @@ export default function App() {
       // 4. Clean statistics records and individual player records across all clubs
       // Also perform aging, retirement, and wonderkid spawning
       const resetStatsClubs = updatedReputationClubs.map((c) => {
-        let currentSquad = c.squad.map((p) => ({
+        let currentSquad: Player[] = c.squad.map((p) => ({
           ...p,
           age: (p.age || 25) + 1, // Age up
           stamina: 100,
@@ -2472,9 +2637,47 @@ export default function App() {
         };
       });
 
+      // ── Relegation & Promotion ─────────────────────────────────────────────
+      // Bottom 3 of the top 20 (by points) get relegated; 3 new clubs promoted
+      const leagueTable = [...resetStatsClubs].slice(0, 20).sort((a, b) => {
+        if (b.points !== a.points) return b.points - a.points;
+        if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+        return b.goalsFor - a.goalsFor;
+      });
+      const relegatedIds = new Set(leagueTable.slice(17).map(c => c.id));
+      // Keep relegated clubs in the pool but demote them (lower reputation)
+      const afterRelegation = resetStatsClubs.map(c => {
+        if (!relegatedIds.has(c.id)) return c;
+        // Repurpose relegated clubs: fresh squad, reduced reputation
+        const promIdx = leagueTable.slice(17).findIndex(lc => lc.id === c.id);
+        const newName = ['Valley United', 'Riverside City', 'Northgate Athletic'][promIdx] ?? c.name;
+        return {
+          ...c,
+          name: newName,
+          reputation: Math.max(10, (c.reputation ?? 40) - 15),
+          squad: Array.from({ length: 18 }, (_, pi) => generateWonderkid(`promo-${Date.now()}-${pi}`)),
+        };
+      });
+
+      // Promoted clubs: regenerate relegated teams with fresh squads to represent new entrants
+      const promotedClubNames = ['Valley United', 'Riverside City', 'Northgate Athletic', 'Port FC', 'Crown Town', 'Westbrook Rovers'];
+
+      // Notify user if relegated
+      const userWasRelegated = relegatedIds.has(nextActiveUserClubId);
+      if (userWasRelegated) {
+        addNotification({
+          type: 'general',
+          title: '⚠️ Relegation',
+          body: `Your club has been relegated. Compete at a lower level next season.`,
+        });
+      }
+
       // 4. Regenerate entirely fresh weekly rosters
-      const teamIds = resetStatsClubs.map((c) => c.id);
+      const teamIds = afterRelegation.map((c) => c.id);
       const leagueClubs = teamIds.slice(0, 20);
+      // Swap relegated IDs reference for fixture generation (use afterRelegation)
+      const postRelegationClubs = afterRelegation;
+
 
       const resetFixtures = generateLeagueFixtures20(leagueClubs);
       const resetTournamentFixtures =
@@ -2482,7 +2685,7 @@ export default function App() {
       const resetBracket: BracketNode[] = [];
 
       // 5. Update state parameters
-      setAllClubs(resetStatsClubs);
+      setAllClubs(postRelegationClubs);
       setLeagueFixtures(resetFixtures);
       setTournamentFixtures(resetTournamentFixtures);
       setCupBracket(resetBracket);
@@ -2686,11 +2889,12 @@ export default function App() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Trash2
-                            onClick={(e) => promptDeleteSaveSlot(slot.id, e)}
-                            className="w-4 h-4 text-rose-500 hover:text-rose-400 opacity-60 hover:opacity-100 shrink-0 cursor-pointer"
-                            title="Delete Save"
-                          />
+                          <span title="Delete Save">
+                            <Trash2
+                              onClick={(e) => promptDeleteSaveSlot(slot.id, e)}
+                              className="w-4 h-4 text-rose-500 hover:text-rose-400 opacity-60 hover:opacity-100 shrink-0 cursor-pointer"
+                            />
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -2835,16 +3039,16 @@ export default function App() {
       {/* 2. RIGHT CONTAINER */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* HEADER TOP DISPLAY */}
-        <header className="h-20 flex items-center justify-between px-6 bg-[#0c0f16] border-b border-white/5 shrink-0">
+        <header className="h-14 md:h-20 flex items-center justify-between px-3 md:px-6 bg-[#0c0f16] border-b border-white/5 shrink-0 gap-2">
           <div className="flex items-center gap-4">
             <div className="flex flex-col">
-              <h1 className="text-lg md:text-xl font-black tracking-tight text-white uppercase flex items-center gap-1">
+              <h1 className="text-sm md:text-xl font-black tracking-tight text-white uppercase flex items-center gap-1">
                 SportSim{" "}
                 <span className="text-sky-400 text-opacity-100 font-extrabold italic bg-sky-500/5 px-2 py-0.5 rounded border border-sky-400/10">
                   Pro
                 </span>
               </h1>
-              <div className="text-[9px] text-slate-400 uppercase font-mono tracking-wider mt-0.5 flex items-center gap-1">
+              <div className="hidden sm:flex text-[9px] text-slate-400 uppercase font-mono tracking-wider mt-0.5 items-center gap-1">
                 <span>First Team Operations Manager Console</span>
                 <span className="text-slate-600">•</span>
                 <span className="text-emerald-400 font-extrabold bg-emerald-500/10 border border-emerald-500/20 px-1 py-0.2 rounded uppercase">
@@ -2853,24 +3057,24 @@ export default function App() {
               </div>
             </div>
 
-            {/* Campaign Schedule Overview readout (no pills/buttons selection) */}
-            <div className="bg-slate-900 border border-white/5 p-2 rounded-xl flex items-center gap-2.5 ml-6 text-xs text-slate-350">
-              <span className="text-[9px] text-slate-500 font-mono uppercase tracking-wider block">
-                CURRENT ROUND STATUS:
-              </span>
-              <span className="text-[11px] text-white font-mono font-black uppercase">
-                Week {currentWeek} / 26
+            {/* Campaign Schedule Overview — hidden on mobile */}
+            <div className="hidden md:flex bg-slate-900 border border-white/5 p-2 rounded-xl items-center gap-2 ml-4 text-xs">
+              <span className="text-[9px] text-slate-500 font-mono uppercase tracking-wider">
+                Wk {currentWeek}/26
               </span>
               <span className="text-slate-700">|</span>
-              <span className="text-[11px] text-[#facc15] font-bold uppercase tracking-wide">
-                {DUAL_SCHEDULE[currentWeek - 1]?.label ||
-                  `League Matchday ${currentWeek}`}
+              <span className="text-[10px] text-[#facc15] font-bold uppercase truncate max-w-[140px]">
+                {DUAL_SCHEDULE[currentWeek - 1]?.label || `Matchday ${currentWeek}`}
               </span>
             </div>
           </div>
 
           {/* RIGHT BALANCE DISPLAY HUD AND USER CREST */}
           <div className="flex items-center gap-3 sm:gap-6">
+            {/* Mobile compact balance — xs only */}
+            <div className="flex sm:hidden items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg">
+              <span className="text-emerald-400 font-mono font-black text-xs">${userBalance.toLocaleString()}</span>
+            </div>
             <div className="hidden sm:flex flex-col items-end">
               <span className="text-[9px] uppercase text-slate-500 font-bold tracking-widest mb-0.5 flex items-center gap-1">
                 <Wallet className="w-3 h-3 text-emerald-400" />
@@ -2941,12 +3145,14 @@ export default function App() {
               onChangeUserFormation={handleFormationShift}
               onChangeUserPlaystyle={handlePlaystyleShift}
               onPromoteYouth={handlePromoteYouth}
+              onSellYouth={handleSellYouth}
               onSignYouthToAcademy={handleSignYouthToAcademy}
               onTogglePlayerFocus={handleTogglePlayerFocus}
               onAssignCoachToPlayer={handleAssignCoachToPlayer}
               onBuyCoach={handleBuyCoach}
               onDismissCoach={handleDismissCoach}
               managerName={managerName}
+              currentWeek={currentWeek}
               managerSkills={managerSkills}
               onUpgradeSkill={(skill) => {
                 if (managerSkills.skillPoints > 0) {
@@ -3490,7 +3696,9 @@ export default function App() {
             <AllTeams
               allClubs={allClubs}
               onTapClub={handleOpenClubDossier}
+              onTakeoverClub={handleTakeoverClub}
               userClubId={userClubId}
+              userBalance={userBalance}
             />
           )}
 
@@ -3501,7 +3709,14 @@ export default function App() {
       </div>
 
       {/* 3. DOSSIER DIALOG PORTALS (UNIVERSAL LINK POPUP) */}
-      {dossierPlayer && (
+      {pendingMoraleEvents.length > 0 && (
+        <MoraleEventModal
+          player={pendingMoraleEvents[0]}
+          onDecision={handleMoraleDecision}
+        />
+      )}
+
+            {dossierPlayer && (
         <PlayerDossierModal
           player={dossierPlayer}
           isOwnTeam={currentActiveUserClub?.squad.some(
@@ -3663,32 +3878,30 @@ export default function App() {
         </div>
       )}
 
-      {/* MOBILE BOTTOM NAV — visible only on small screens */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0c0f16] border-t border-white/10 flex items-stretch h-16 safe-area-inset-bottom">
+            {/* MOBILE BOTTOM NAV — visible only on small screens */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0a0c12]/95 backdrop-blur-md border-t border-white/10 flex items-center justify-around px-1 pb-safe">
         {[
-          { id: 'MANAGER' as const, label: 'Manager', icon: Briefcase },
-          { id: 'NEXT_MATCH' as const, label: 'Match', icon: Zap },
-          { id: 'STANDINGS' as const, label: 'League', icon: Award },
-          { id: 'FIXTURES' as const, label: 'Fixtures', icon: Calendar },
-          { id: 'ANALYTICS' as const, label: 'Leaders', icon: BarChart3 },
-        ].map(item => {
-          const Icon = item.icon;
-          const isActive = currentTabProgress === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setCurrentTabProgress(item.id)}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all cursor-pointer relative ${
-                isActive ? 'text-sky-400' : 'text-slate-600 hover:text-slate-400'
-              }`}
-            >
-              {isActive && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-sky-400 rounded-full" />}
-              <Icon className="w-5 h-5" />
-              <span className="text-[9px] font-bold uppercase tracking-wider">{item.label}</span>
-            </button>
-          );
-        })}
+          { id: "NEXT_MATCH", icon: "▶", label: "Next" },
+          { id: "FIXTURES", icon: "🏆", label: "Fixtures" },
+          { id: "MANAGER", icon: "👥", label: "Squad" },
+          { id: "STANDINGS", icon: "📋", label: "Standings" },
+          { id: "ANALYTICS", icon: "📊", label: "Stats" },
+        ].map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setCurrentTabProgress(item.id as any)}
+            className={`flex flex-col items-center justify-center py-2.5 px-2 min-w-[52px] transition-all ${
+              currentTabProgress === item.id
+                ? "text-sky-400"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <span className="text-lg leading-none">{item.icon}</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider mt-1">{item.label}</span>
+          </button>
+        ))}
       </nav>
+
     </div>
   );
 }

@@ -84,7 +84,7 @@ export const PostMatchModal: React.FC<PostMatchModalProps> = ({ analysis, homeCl
               </div>
               <p className="text-[10px] text-slate-400 font-bold">{homeClub.name}</p>
             </div>
-            <div className="text-center px-4 py-2 bg-white/5 rounded-2xl border border-white/10 min-w-[80px]">
+            <div className="text-center px-3 sm:px-4 py-2 bg-white/5 rounded-2xl border border-white/10 min-w-[60px] sm:min-w-[80px]">
               <p className="text-3xl font-black text-white tracking-tight">
                 {analysis.homeScore} — {analysis.awayScore}
               </p>

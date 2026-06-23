@@ -164,19 +164,19 @@ export const LeagueTable: React.FC<LeagueTableProps> = ({
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse min-w-[500px]">
+                <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-white/5 text-[8px] uppercase tracking-widest text-[#94a3b8] font-mono leading-none pb-2">
                       <th className="py-2 text-center w-8">POS</th>
                       <th className="py-2">CLUB</th>
-                      <th className="py-2 text-center w-10 font-bold">PL</th>
-                      <th className="py-2 text-center w-10 text-emerald-400">W</th>
-                      <th className="py-2 text-center w-10 text-slate-400">D</th>
-                      <th className="py-2 text-center w-10 text-rose-455">L</th>
-                      <th className="py-2 text-center w-12 text-slate-500">GF:GA</th>
-                      <th className="py-2 text-center w-10">GD</th>
+                      <th className="py-2 text-center w-10 font-bold hidden sm:table-cell">PL</th>
+                      <th className="py-2 text-center w-10 text-emerald-400 hidden sm:table-cell">W</th>
+                      <th className="py-2 text-center w-10 text-slate-400 hidden sm:table-cell">D</th>
+                      <th className="py-2 text-center w-10 text-rose-455 hidden sm:table-cell">L</th>
+                      <th className="py-2 text-center w-12 text-slate-500 hidden md:table-cell">GF:GA</th>
+                      <th className="py-2 text-center w-10 hidden md:table-cell">GD</th>
                       <th className="py-2 text-center w-12 bg-sky-500/5 font-black text-sky-450">PTS</th>
-                      <th className="py-2 text-center">STREAK</th>
+                      <th className="py-2 text-center hidden lg:table-cell">STREAK</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 font-sans">
@@ -215,14 +215,14 @@ export const LeagueTable: React.FC<LeagueTableProps> = ({
                               </span>
                             </div>
                           </td>
-                          <td className="py-2.5 text-center font-mono text-slate-300">{club.played}</td>
-                          <td className="py-2.5 text-center font-mono text-emerald-400">{club.won}</td>
-                          <td className="py-2.5 text-center font-mono text-slate-400">{club.drawn}</td>
-                          <td className="py-2.5 text-center font-mono text-rose-455">{club.lost}</td>
-                          <td className="py-2.5 text-center font-mono text-slate-550">
+                          <td className="py-2.5 text-center font-mono text-slate-300 hidden sm:table-cell">{club.played}</td>
+                          <td className="py-2.5 text-center font-mono text-emerald-400 hidden sm:table-cell">{club.won}</td>
+                          <td className="py-2.5 text-center font-mono text-slate-400 hidden sm:table-cell">{club.drawn}</td>
+                          <td className="py-2.5 text-center font-mono text-rose-455 hidden sm:table-cell">{club.lost}</td>
+                          <td className="py-2.5 text-center font-mono text-slate-550 hidden md:table-cell">
                             {club.goalsFor}:{club.goalsAgainst}
                           </td>
-                          <td className={`py-2.5 text-center font-mono font-bold ${
+                          <td className={`py-2.5 text-center font-mono font-bold hidden md:table-cell ${
                             club.goalDifference > 0 ? 'text-emerald-400' : (club.goalDifference < 0 ? 'text-rose-455' : 'text-slate-500')
                           }`}>
                             {club.goalDifference > 0 ? `+${club.goalDifference}` : club.goalDifference}
@@ -230,7 +230,7 @@ export const LeagueTable: React.FC<LeagueTableProps> = ({
                           <td className={`py-2.5 text-center font-mono font-black text-xs bg-sky-500/5 ${isUser ? 'text-sky-400' : 'text-white'}`}>
                             {club.points}
                           </td>
-                          <td className="py-2.5">
+                          <td className="py-2.5 hidden lg:table-cell">
                             <div className="flex gap-1 justify-center">
                               {club.streak.slice(-5).map((outcome, oidx) => (
                                 <span 

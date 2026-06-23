@@ -27,9 +27,17 @@ export const SquadPitch: React.FC<SquadPitchProps> = ({ squad, mentality, format
 
     if (player.isStarting) {
       if (selectedStarterId === player.id) {
+        // Deselect
         setSelectedStarterId(null);
+      } else if (selectedStarterId && onSwapPlayers) {
+        // Second starter clicked — swap two starters (position swap)
+        onSwapPlayers(selectedStarterId, player.id);
+        setSelectedStarterId(null);
+        setSelectedBenchId(null);
       } else {
+        // First starter selected
         setSelectedStarterId(player.id);
+        setSelectedBenchId(null);
         if (selectedBenchId && onSwapPlayers) {
           onSwapPlayers(player.id, selectedBenchId);
           setSelectedStarterId(null);
@@ -92,16 +100,29 @@ export const SquadPitch: React.FC<SquadPitchProps> = ({ squad, mentality, format
   tryFill(allocatedMID, 'MID', midCount);
   tryFill(allocatedATT, 'ATT', attCount);
 
-  const forceFill = (pool: Player[], limit: number) => {
-    while (pool.length < limit && unallocated.length > 0) {
-      pool.push(unallocated.pop()!);
+  // Smart fallback: try to pick by nearest role before taking random
+  const posOrder: Record<string, string[]> = {
+    GK:  ['GK', 'DEF', 'MID', 'ATT'],
+    DEF: ['DEF', 'MID', 'ATT', 'GK'],
+    MID: ['MID', 'DEF', 'ATT', 'GK'],
+    ATT: ['ATT', 'MID', 'DEF', 'GK'],
+  };
+  const forceFill = (pool: Player[], limit: number, preferPos: string) => {
+    if (pool.length >= limit || unallocated.length === 0) return;
+    const order = posOrder[preferPos] || ['DEF','MID','ATT','GK'];
+    for (const p of order) {
+      for (let i = unallocated.length - 1; i >= 0; i--) {
+        if (pool.length >= limit) break;
+        if (unallocated[i].position === p) pool.push(unallocated.splice(i, 1)[0]);
+      }
+      if (pool.length >= limit) break;
     }
   };
 
-  forceFill(allocatedGK, 1);
-  forceFill(allocatedDEF, defCount);
-  forceFill(allocatedMID, midCount);
-  forceFill(allocatedATT, attCount);
+  forceFill(allocatedGK, 1, 'GK');
+  forceFill(allocatedDEF, defCount, 'DEF');
+  forceFill(allocatedMID, midCount, 'MID');
+  forceFill(allocatedATT, attCount, 'ATT');
 
   const groupedStarters = {
     GK: allocatedGK,

@@ -695,8 +695,8 @@ export function calculatePreMatchOdds(
   return { homeWin, draw, awayWin, over25, under25 };
 }
 
-export function quickSimulateFixture(homeClub: Club, awayClub: Club): Fixture {
-  return simulateEntireMatch("dummy-id", homeClub, awayClub);
+export function quickSimulateFixture(homeClub: Club, awayClub: Club, fixtureId = "dummy-id"): Fixture {
+  return simulateEntireMatch(fixtureId, homeClub, awayClub);
 }
 
 const GOAL_REPLAY_TEMPLATES = [

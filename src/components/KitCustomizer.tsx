@@ -96,7 +96,7 @@ export const KitCustomizer: React.FC<KitCustomizerProps> = ({ primaryColor, seco
         </div>
 
         {/* Controls */}
-        <div className="flex-1 space-y-4 min-w-[200px]">
+        <div className="flex-1 space-y-4 min-w-0">
           {/* Primary color */}
           <div className="space-y-2">
             <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Primary Color</p>

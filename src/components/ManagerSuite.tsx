@@ -35,6 +35,13 @@ import {
   generateWonderkid,
   generateUniqueCoach,
 } from "../data/names";
+import {
+  getTransferMarketPool,
+  getYouthMarketPool,
+  getHireableCoaches,
+  refreshMarketPool,
+  refreshCoachPool,
+} from "../data/transferMarket";
 import { SquadPitch } from "./SquadPitch";
 
 interface ManagerSuiteProps {
@@ -45,7 +52,7 @@ interface ManagerSuiteProps {
   managerSkills: ManagerSkills;
   onUpgradeSkill: (skillId: keyof ManagerSkills) => void;
   onUpgradeFacilities: (
-    facilityType: "training" | "tactics" | "cardio" | "medical",
+    facilityType: "training" | "tactics" | "cardio" | "medical" | "accommodation",
     cost: number,
   ) => void;
   onBuyPlayer: (newPlayer: Player, cost: number) => void;
@@ -58,10 +65,12 @@ interface ManagerSuiteProps {
   onChangeUserPlaystyle?: (playstyle: PlaystyleType) => void;
   onPromoteYouth?: (playerId: string) => void;
   onSignYouthToAcademy?: (player: Player, cost: number) => void;
+  onSellYouth?: (playerId: string, fee: number) => void;
   onTogglePlayerFocus?: (playerId: string) => void;
   onAssignCoachToPlayer?: (playerId: string, coachId: string | null) => void;
   onBuyCoach?: (newCoach: Coach, cost: number) => void;
   onDismissCoach?: (coachId: string, refundAmount: number) => void;
+  currentWeek?: number;
 }
 
 const DualStatProgress: React.FC<{ label: string; current: number; potential: number }> = ({ label, current, potential }) => {
@@ -91,6 +100,218 @@ const DualStatProgress: React.FC<{ label: string; current: number; potential: nu
   );
 };
 
+
+interface ScoutTabProps {
+  allClubs: Club[];
+  userClub: Club;
+  userBalance: number;
+  squadCap: number;
+  scoutedClubId: string;
+  setScoutedClubId: (id: string) => void;
+  onBuyPlayer: (player: Player, cost: number) => void;
+  onTapPlayer?: (playerId: string) => void;
+  showMessage: (msg: string) => void;
+}
+
+const ScoutTab: React.FC<ScoutTabProps> = ({
+  allClubs,
+  userClub,
+  userBalance,
+  squadCap,
+  scoutedClubId,
+  setScoutedClubId,
+  onBuyPlayer,
+  onTapPlayer,
+  showMessage,
+}) => {
+  const [scoutFilter, setScoutFilter] = useState<string>("ALL");
+  const [scoutSearch, setScoutSearch] = useState<string>("");
+  const [scoutedIds, setScoutedIds] = useState<Set<string>>(new Set());
+
+  const targetClub = allClubs.find(c => c.id === scoutedClubId);
+  const posGroups = ["ALL","GK","DEF","MID","ATT"];
+  const filteredSquad = targetClub
+    ? [...targetClub.squad]
+        .filter(p => scoutFilter === "ALL" || p.position === scoutFilter)
+        .filter(p => scoutSearch === "" || p.name.toLowerCase().includes(scoutSearch.toLowerCase()))
+        .sort((a,b) => b.rating - a.rating)
+    : [];
+
+  return (
+    <div className="animate-fadeIn space-y-4">
+      <div className="bg-[#121620] border border-white/10 rounded-2xl p-5">
+        <div className="border-b border-white/5 pb-3 mb-4">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-white flex items-center gap-2">
+            🔍 Opposition Scout Dossier
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Select a rival club to reveal their squad. Scout individual players to unlock exact OVR and attributes.
+          </p>
+        </div>
+
+        {/* Club selector */}
+        <div className="flex flex-col sm:flex-row gap-2 mb-4">
+          <select
+            value={scoutedClubId}
+            onChange={e => setScoutedClubId(e.target.value)}
+            className="flex-1 bg-slate-950 border border-white/10 text-xs font-bold text-slate-300 py-2.5 px-3 rounded-xl outline-none cursor-pointer focus:border-amber-500 transition-all"
+          >
+            <option value="">-- Choose a Club to Scout --</option>
+            {allClubs.filter(c => c.id !== userClub.id).map(c => (
+              <option key={c.id} value={c.id}>{c.name} ({c.won}W {c.drawn}D {c.lost}L)</option>
+            ))}
+          </select>
+          {targetClub && (
+            <input
+              type="text"
+              placeholder="Search player…"
+              value={scoutSearch}
+              onChange={e => setScoutSearch(e.target.value)}
+              className="sm:w-40 bg-slate-950 border border-white/10 text-xs text-slate-300 py-2.5 px-3 rounded-xl outline-none focus:border-sky-500 transition-all placeholder-slate-600"
+            />
+          )}
+        </div>
+
+        {targetClub && (
+          <>
+            {/* Club overview */}
+            <div className="flex flex-wrap items-center gap-3 bg-slate-900/50 border border-white/5 rounded-xl p-3 mb-4">
+              <div className="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center text-lg shrink-0"
+                style={{ backgroundColor: targetClub.color + '22' }}>
+                ⚽
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-black" style={{ color: targetClub.color }}>{targetClub.name}</div>
+                <div className="text-[9px] text-slate-400 font-mono">
+                  {targetClub.squad.length} players · Avg OVR {Math.round(targetClub.squad.reduce((a,p) => a+p.rating,0)/(targetClub.squad.length||1))}
+                </div>
+              </div>
+              <div className="text-[9px] font-mono text-slate-500 text-right">
+                <div className="font-black text-white">{targetClub.points}pts</div>
+                <div>{targetClub.won}W {targetClub.drawn}D {targetClub.lost}L</div>
+              </div>
+            </div>
+
+            {/* Position filter */}
+            <div className="flex gap-1 mb-3 flex-wrap">
+              {posGroups.map(pos => (
+                <button key={pos}
+                  onClick={() => setScoutFilter(pos)}
+                  className={`px-2.5 py-1 text-[9px] font-black uppercase rounded-lg transition-all cursor-pointer ${
+                    scoutFilter === pos ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                  }`}>
+                  {pos}
+                </button>
+              ))}
+              <span className="ml-auto text-[9px] text-slate-500 font-mono self-center">{filteredSquad.length} players</span>
+            </div>
+
+            {/* Player list */}
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+              {filteredSquad.map(player => {
+                const isScouted = scoutedIds.has(player.id);
+                const ovrDisplay = isScouted ? `${player.rating} OVR` : `${Math.max(40, player.rating - 6)}–${Math.min(99, player.rating + 6)} OVR`;
+                const pot = player.potentialRating ?? Math.min(99, player.rating + 8);
+                const isAffordable = player.marketValue <= userBalance;
+                const posCol = player.position === 'GK' ? 'bg-orange-500/20 text-orange-400'
+                  : player.position === 'DEF' ? 'bg-sky-500/20 text-sky-400'
+                  : player.position === 'MID' ? 'bg-emerald-500/20 text-emerald-400'
+                  : 'bg-rose-500/20 text-rose-400';
+
+                return (
+                  <div key={player.id}
+                    className={`bg-slate-900/50 border rounded-xl p-3 transition-all ${isScouted ? 'border-amber-500/20' : 'border-white/5'}`}>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-black shrink-0 ${posCol}`}>{player.position}</span>
+                        <div className="min-w-0">
+                          <button onClick={() => onTapPlayer?.(player.id)}
+                            className="text-sm font-bold text-white hover:text-amber-400 truncate block text-left">
+                            {player.name}
+                          </button>
+                          <div className="text-[9px] text-slate-500 font-mono">
+                            {player.age}y · {player.nationality || 'Unknown'} {player.personality ? `· ${player.personality}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className={`text-sm font-black font-mono ${isScouted ? 'text-amber-400' : 'text-slate-400'}`}>{ovrDisplay}</div>
+                        <div className="text-[8px] text-slate-500">${(player.marketValue/1000000).toFixed(1)}M</div>
+                      </div>
+                    </div>
+
+                    {isScouted ? (
+                      <div className="space-y-1 mb-2">
+                        {(['pace','shooting','passing','defending'] as const).map(attr => {
+                          const val = player.attributes?.[attr] ?? player.rating;
+                          const potVal = Math.min(99, val + (pot - player.rating));
+                          return (
+                            <div key={attr} className="flex items-center gap-1.5">
+                              <span className="w-6 text-[8px] font-mono text-slate-500 uppercase shrink-0">{attr.slice(0,3).toUpperCase()}</span>
+                              <div className="flex-1 bg-slate-950 h-1.5 rounded-full overflow-hidden relative">
+                                <div className="absolute inset-y-0 left-0 bg-amber-500/25" style={{ width: `${potVal}%` }} />
+                                <div className="absolute inset-y-0 left-0 bg-teal-500 rounded-full" style={{ width: `${val}%` }} />
+                              </div>
+                              <span className="text-[8px] font-mono text-slate-400 w-8 text-right shrink-0">{val}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="space-y-1 mb-2 opacity-40 select-none">
+                        {['PAC','SHO','PAS','DEF'].map(l => (
+                          <div key={l} className="flex items-center gap-1.5">
+                            <span className="w-6 text-[8px] font-mono text-slate-500">{l}</span>
+                            <div className="flex-1 bg-slate-950 h-1.5 rounded-full overflow-hidden">
+                              <div className="h-full bg-slate-700 rounded-full" style={{ width: '50%' }} />
+                            </div>
+                            <span className="text-[8px] font-mono text-slate-600 w-8 text-right">??</span>
+                          </div>
+                        ))}
+                        <div className="text-[8px] text-slate-600 italic text-center mt-1">Scout to reveal full stats</div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 pt-1">
+                      {!isScouted && (
+                        <button
+                          onClick={() => setScoutedIds(prev => new Set([...prev, player.id]))}
+                          className="flex-1 py-1 bg-amber-500/15 hover:bg-amber-500/30 text-amber-400 text-[9px] font-black uppercase rounded-lg transition-all cursor-pointer"
+                        >
+                          🔍 Scout Player
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          if (!isAffordable) { showMessage(`⚠️ Need $${((player.marketValue - userBalance)/1000000).toFixed(1)}M more.`); return; }
+                          if (userClub.squad.length >= squadCap) { showMessage(`⚠️ Squad full (${squadCap} max). Sell or release players first.`); return; }
+                          onBuyPlayer(player, player.marketValue);
+                          showMessage(`✅ Signed ${player.name} from ${targetClub.name}!`);
+                        }}
+                        className={`flex-1 py-1 text-[9px] font-black uppercase rounded-lg transition-all cursor-pointer ${
+                          isAffordable ? 'bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-black' : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                        }`}
+                      >
+                        {isAffordable ? `Sign — $${(player.marketValue/1000000).toFixed(1)}M` : 'Too Expensive'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {!scoutedClubId && (
+          <div className="py-10 text-center text-xs text-slate-500 italic font-mono uppercase">
+            Select a club above to begin scouting their squad.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   userClub,
   allClubs,
@@ -109,12 +330,25 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   onChangeUserPlaystyle,
   onPromoteYouth,
   onSignYouthToAcademy,
+  onSellYouth,
   onTogglePlayerFocus,
   onAssignCoachToPlayer,
   onBuyCoach,
   onDismissCoach,
+  currentWeek = 1,
 }) => {
   // Inner states
+  const squadCap = 25 + (userClub.accommodationFacilities || 1) * 5;
+
+  // Reset board application count each new match week
+  const [lastResetWeek, setLastResetWeek] = useState<number>(currentWeek);
+  React.useEffect(() => {
+    if (currentWeek !== lastResetWeek) {
+      setBoardBackingCount(0);
+      setBoardBackingResult("");
+      setLastResetWeek(currentWeek);
+    }
+  }, [currentWeek]); // lvl1=30, lvl2=35, lvl3=40, lvl4=45, lvl5=50
   const [activeSubTab, setActiveSubTab] = useState<
     | "SQUAD"
     | "TRANSFERS"
@@ -124,26 +358,20 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
     | "COACHES"
     | "BOARDROOM"
     | "PROFILE"
+    | "SCOUT"
   >("SQUAD");
+  const [scoutedClubId, setScoutedClubId] = useState<string>("");
   const [scoutedTransferList, setScoutedTransferList] = useState<Player[]>(() =>
-    generateInitialTransferMarket(),
+    getTransferMarketPool(),
   );
 
-  const [scoutedYouthList, setScoutedYouthList] = useState<Player[]>(() => {
-    const list: Player[] = [];
-    for (let i = 0; i < 6; i++) {
-      list.push(generateWonderkid(`youth-scout-${Date.now()}-${i}`, true));
-    }
-    return list;
-  });
+  const [scoutedYouthList, setScoutedYouthList] = useState<Player[]>(() =>
+    getYouthMarketPool(),
+  );
 
-  const [scoutedCoachList, setScoutedCoachList] = useState<Coach[]>(() => {
-    const list: Coach[] = [];
-    for (let i = 0; i < 5; i++) {
-      list.push(generateUniqueCoach(20 + i)); // Offset to avoid overlapping with default active managers
-    }
-    return list;
-  });
+  const [scoutedCoachList, setScoutedCoachList] = useState<Coach[]>(() =>
+    getHireableCoaches(),
+  );
 
   const [infoMessage, setInfoMessage] = useState<string>("");
 
@@ -228,6 +456,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
         morale: 100,
         goals: 0,
         assists: 0,
+        saves: 0,
         yellowCards: 0,
         redCards: 0,
         matchRatings: [],
@@ -237,6 +466,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
             : randRange(150, 290) * 1000,
         attributes: generatePlayerAttributes(pos, rating),
         isStarting: false,
+        fatigue: 100,
       });
     });
     return list;
@@ -267,12 +497,14 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
         morale: 100,
         goals: 0,
         assists: 0,
+        saves: 0,
         yellowCards: 0,
         redCards: 0,
         matchRatings: [],
         marketValue: calculatedValue > 100000 ? calculatedValue : randRange(200, 350) * 1000,
         attributes: generatePlayerAttributes(pos, rating),
         isStarting: false,
+        fatigue: 100,
       });
     }
     // Extra option: Elite Free Agent — young, high OVR, special badge
@@ -291,12 +523,14 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
       morale: 100,
       goals: 0,
       assists: 0,
+      saves: 0,
       yellowCards: 0,
       redCards: 0,
       matchRatings: [],
       marketValue: Math.round(Math.pow(eliteRating - 55, 3.1) * 12500 / 50000) * 50000,
       attributes: generatePlayerAttributes(elitePos, eliteRating),
       isStarting: false,
+      fatigue: 100,
       isEliteFreeAgent: true,
     } as Player & { isEliteFreeAgent?: boolean });
     return list;
@@ -350,14 +584,20 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
 
   const handleRefreshScouting = () => {
     if (transferSegment === "PLAYERS") {
-      setScoutedTransferList(generateRefreshedTransferMarket());
-      showMessage("🔄 Refreshed: Better-rated younger players + 1 Elite Free Agent unlocked!");
+      setScoutedTransferList(refreshMarketPool());
+      showMessage("🔄 Refreshed: 80+ new market players available — GKs, defenders, midfielders & attackers!");
     } else if (transferSegment === "YOUTH") {
-      setScoutedYouthList(generateRefreshedYouthList());
-      showMessage("🔄 Refreshed: Higher-potential youth targets + 1 Wonderkid Sensation found!");
+      // Keep using wonderkid generator for premium refresh, but also mix from pool
+      const premium: Player[] = [];
+      for (let i = 0; i < 4; i++) {
+        const y = generateWonderkid(`youth-refresh-${Date.now()}-${i}`, true);
+        premium.push({ ...y, rating: Math.min(72, y.rating + randRange(4, 10)), potentialRating: Math.min(96, (y.potentialRating || 88) + randRange(3, 8)) });
+      }
+      setScoutedYouthList([...getYouthMarketPool().slice(0, 26), ...premium]);
+      showMessage("🔄 Refreshed: 30 new youth prospects + premium wonderkid candidates!");
     } else if (transferSegment === "COACHES") {
-      setScoutedCoachList(generateRefreshedCoachList());
-      showMessage("🔄 Refreshed: Top-tier coaches available + 1 Legendary Manager on the market!");
+      setScoutedCoachList(refreshCoachPool());
+      showMessage("🔄 Refreshed: 25 new coaches across all specialities available for hire!");
     }
   };
 
@@ -381,45 +621,45 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   const tacticsCost = getUpgradeCost(userClub.tacticsFacilities);
   const cardioCost = getUpgradeCost(userClub.cardioFacilities);
   const medicalCost = getUpgradeCost(userClub.medicalFacilities || 1);
+  const accommodationCost = getUpgradeCost(userClub.accommodationFacilities || 1);
 
-  const handleInteractiveSwap = (starterId: string, benchId: string) => {
-    if (onAdjustSquadLineup) {
-      const updatedSquad = userClub.squad.map((p) => {
-        if (p.id === starterId) {
-          return { ...p, isStarting: false };
-        }
-        if (p.id === benchId) {
-          return { ...p, isStarting: true };
-        }
+  const handleInteractiveSwap = (idA: string, idB: string) => {
+    if (!onAdjustSquadLineup) return;
+    const playerA = userClub.squad.find(p => p.id === idA);
+    const playerB = userClub.squad.find(p => p.id === idB);
+    if (!playerA || !playerB) return;
+
+    const bothStarters = playerA.isStarting && playerB.isStarting;
+
+    if (bothStarters) {
+      // Starter↔Starter: swap their positions in the array so the pitch re-slots them
+      const updatedSquad = [...userClub.squad];
+      const iA = updatedSquad.findIndex(p => p.id === idA);
+      const iB = updatedSquad.findIndex(p => p.id === idB);
+      [updatedSquad[iA], updatedSquad[iB]] = [updatedSquad[iB], updatedSquad[iA]];
+      onAdjustSquadLineup(updatedSquad);
+      showMessage(`${playerA.name} and ${playerB.name} swapped positions.`);
+    } else {
+      // Starter↔Bench: toggle isStarting
+      const updatedSquad = userClub.squad.map(p => {
+        if (p.id === idA) return { ...p, isStarting: !p.isStarting };
+        if (p.id === idB) return { ...p, isStarting: !p.isStarting };
         return p;
       });
-
-      const finalStartingCount = updatedSquad.filter(
-        (p) => p.isStarting,
-      ).length;
-      const finalGKCount = updatedSquad.filter(
-        (p) => p.isStarting && p.position === "GK",
-      ).length;
-
-      if (finalStartingCount === 11 && finalGKCount === 1) {
-        onAdjustSquadLineup(updatedSquad);
-        showMessage(
-          "Squad formations swapped successfully! Team sheet updated.",
-        );
-      } else {
-        onAdjustSquadLineup(updatedSquad);
-        showMessage(
-          "Squad swapped. Maintain active team sheet configurations.",
-        );
-      }
+      const finalGKCount = updatedSquad.filter(p => p.isStarting && p.position === 'GK').length;
+      if (finalGKCount < 1) { showMessage('⚠️ Must keep at least one GK in the starting XI.'); return; }
+      onAdjustSquadLineup(updatedSquad);
+      const starter = playerA.isStarting ? playerA : playerB;
+      const sub = playerA.isStarting ? playerB : playerA;
+      showMessage(`${sub.name} replaces ${starter.name} in the starting XI.`);
     }
   };
 
   // Buy Player
   const buyPlayerFromMarket = (player: Player) => {
-    if (userClub.squad.length >= 30) {
+    if (userClub.squad.length >= squadCap) {
       showMessage(
-        "Your active squad size is at the legal capacity limit of 30 players!",
+        `Your active squad size is at the legal capacity limit of ${squadCap} players!`,
       );
       return;
     }
@@ -504,20 +744,21 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
     );
   };
 
-  const getApprovalProbability = (amt: number, count: number) => {
-    // First 3 requests have "no consequences" (higher baseline approval)
-    if (count < 3) {
-      if (amt <= 100000000) return 98; // 98% approval up to 100M
-      if (amt <= 250000000) return 85; // 85% approval up to 250M
-      if (amt <= 500000000) return 70; // 70% approval up to 500M
-      return 50; // 50% approval above 500M
-    } else {
-      // After 3 requests, chance of approval is affected but "not too much at all"
-      if (amt <= 100000000) return 75; // Still very high! (75% for up to 100M)
-      if (amt <= 250000000) return 60;
-      if (amt <= 500000000) return 45;
-      return 30;
-    }
+  const getApprovalProbability = (amt: number, count: number): number => {
+    // Base approval odds by amount
+    let base: number;
+    if (amt <= 100000000)      base = 98;
+    else if (amt <= 250000000) base = 85;
+    else if (amt <= 500000000) base = 70;
+    else                       base = 50;
+
+    // First 3 applications: full odds, no penalty
+    if (count < 3) return base;
+
+    // Each extra application beyond the 3rd reduces odds by 15pp, floor 5%
+    const extraApps = count - 3; // 0 on 4th attempt, 1 on 5th, etc.
+    const penalty = extraApps * 15;
+    return Math.max(5, base - penalty);
   };
 
   const handleAskForBoardFunds = () => {
@@ -624,6 +865,16 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
           Staff & Coaches
         </button>
         <button
+          onClick={() => setActiveSubTab("SCOUT")}
+          className={`flex-1 py-2 text-[10px] uppercase font-black tracking-wider rounded-lg text-center cursor-pointer transition-all ${
+            activeSubTab === "SCOUT"
+              ? "bg-amber-500 text-black shadow-md"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          🔍 Scout
+        </button>
+        <button
           onClick={() => setActiveSubTab("BOARDROOM")}
           className={`flex-1 py-2 text-[10px] uppercase font-black tracking-wider rounded-lg text-center cursor-pointer transition-all ${
             activeSubTab === "BOARDROOM"
@@ -662,7 +913,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                   Roster Size
                 </span>
                 <h4 className="text-2xl font-mono font-black text-white mt-1">
-                  {userClub.squad.length} / 20 Registered
+                  {userClub.squad.length} / {squadCap} Registered
                 </h4>
               </div>
               <UserCheck className="w-8 h-8 text-sky-400 opacity-60" />
@@ -777,149 +1028,112 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
             />
 
             <div className="mt-8 border-t border-white/5 pt-4">
-              <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4">
-                Detailed Roster Statistics
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[700px]">
-                  <thead>
-                    <tr className="border-b border-white/5 text-[9px] uppercase text-slate-500 font-mono">
-                      <th className="py-2">Squad Player Card</th>
-                      <th className="py-2 text-center">POS</th>
-                      <th className="py-2 text-center">OVR</th>
-                      <th className="py-2 text-center">STAMINA</th>
-                      <th className="py-2 text-center">GOALS / ASSISTS</th>
-                      <th className="py-2 text-center">QUALITIES INDEX</th>
-                      <th className="py-2 text-right">MARKET VALUE</th>
-                      <th className="py-2 text-right">ACTION</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {userClub.squad.map((player) => {
-                      const isStarter = player.isStarting;
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                  Detailed Roster Statistics
+                </h3>
+                <span className="text-[9px] font-mono text-slate-500 bg-slate-800/60 px-2 py-1 rounded">
+                  {userClub.squad.length} / {squadCap} Players
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {userClub.squad.map((player) => {
+                  const pot = player.potentialRating ?? Math.min(99, player.rating + 8);
+                  const attrs = player.attributes;
+                  const statPairs: [string, string, number][] = [
+                    ['PAC', 'pace', attrs?.pace ?? player.rating],
+                    ['SHO', 'shooting', attrs?.shooting ?? player.rating],
+                    ['PAS', 'passing', attrs?.passing ?? player.rating],
+                    ['DRI', 'dribbling', attrs?.dribbling ?? player.rating],
+                    ['DEF', 'defending', attrs?.defending ?? player.rating],
+                    ['PHY', 'physical', attrs?.physical ?? player.rating],
+                  ];
+                  const posCol = player.position === 'GK' ? 'text-orange-400 bg-orange-500/20'
+                    : player.position === 'DEF' ? 'text-sky-400 bg-sky-500/20'
+                    : player.position === 'MID' ? 'text-emerald-400 bg-emerald-500/20'
+                    : 'text-rose-400 bg-rose-500/20';
+                  const isInjured = (player.injuryWeeksRemaining ?? 0) > 0;
 
-                      return (
-                        <tr
-                          key={player.id}
-                          className="text-xs hover:bg-white/5 transition-all"
-                        >
-                          <td className="py-3">
-                            <div className="flex flex-col">
-                              <span
-                                onClick={() => onTapPlayer?.(player.id)}
-                                className="font-bold text-white text-sm cursor-pointer hover:underline hover:text-sky-400"
-                              >
-                                {player.name}
-                              </span>
-                              <span className="text-[9px] text-slate-400 flex items-center gap-1.5 font-mono">
-                                {isStarter ? (
-                                  <span className="bg-[#22c55e]/15 text-[#22c55e] inline-block px-1 rounded-sm text-[8px] font-black uppercase">
-                                    Active Starter
-                                  </span>
-                                ) : (
-                                  <span className="bg-slate-800/80 text-slate-500 inline-block px-1 rounded-sm text-[8px] font-black uppercase">
-                                    Sub bench
-                                  </span>
-                                )}
-                                ID: #
-                                {player.id.substring(
-                                  player.id.lastIndexOf("-") + 1,
-                                )}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-3 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded font-black text-[9px] ${
-                                player.position === "GK"
-                                  ? "bg-orange-500/20 text-orange-400"
-                                  : player.position === "DEF"
-                                    ? "bg-sky-500/20 text-sky-400"
-                                    : player.position === "MID"
-                                      ? "bg-emerald-500/20 text-emerald-400"
-                                      : "bg-rose-500/20 text-rose-450"
-                              }`}
-                            >
+                  return (
+                    <div key={player.id}
+                      className="bg-slate-900/50 border border-white/5 rounded-xl p-3 hover:border-sky-500/30 transition-all">
+                      {/* Header */}
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <button
+                            onClick={() => onTapPlayer?.(player.id)}
+                            className="font-bold text-white text-sm hover:text-sky-400 text-left truncate block w-full"
+                          >
+                            {player.name}
+                          </button>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${posCol}`}>
                               {player.position}
                             </span>
-                          </td>
-                          <td className="py-3 text-center">
-                            <span className="font-mono font-bold text-white bg-slate-800 px-2 py-0.5 rounded">
-                              {player.rating}
-                            </span>
-                          </td>
-                          <td className="py-3 text-center">
-                            <div className="flex flex-col items-center">
-                              <span
-                                className={`font-mono font-bold ${player.stamina < 60 ? "text-rose-400" : "text-emerald-400"}`}
-                              >
-                                {Math.round(player.stamina)}%
-                              </span>
-                              <div className="w-14 bg-slate-900 h-1 rounded-full overflow-hidden mt-1">
-                                <div
-                                  className="h-full bg-emerald-500"
-                                  style={{
-                                    width: `${player.stamina}%`,
-                                    backgroundColor:
-                                      player.stamina < 60
-                                        ? "#f43f5e"
-                                        : "#10b981",
-                                  }}
-                                ></div>
+                            <span className="text-[8px] text-slate-500 font-mono">{player.age}y</span>
+                            {player.nationality && <span className="text-[8px] text-slate-500">{player.nationality}</span>}
+                            {player.isStarting
+                              ? <span className="bg-emerald-500/15 text-emerald-400 px-1 rounded text-[8px] font-black uppercase">Starter</span>
+                              : <span className="bg-slate-800 text-slate-500 px-1 rounded text-[8px] uppercase">Sub</span>}
+                            {isInjured && <span className="bg-rose-500/20 text-rose-400 px-1 rounded text-[8px] font-black animate-pulse">🏥 {player.injuryWeeksRemaining}wk</span>}
+                          </div>
+                        </div>
+                        <div className="text-right ml-2 shrink-0">
+                          <div className="text-xl font-black text-white font-mono leading-none">{player.rating}</div>
+                          <div className="text-[8px] text-sky-400 font-mono">{pot} POT</div>
+                        </div>
+                      </div>
+
+                      {/* OVR→POT bar */}
+                      <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden mb-2 relative">
+                        <div className="absolute inset-y-0 left-0 bg-sky-500/25" style={{ width: `${pot}%` }} />
+                        <div className="absolute inset-y-0 left-0 bg-sky-500 rounded-full" style={{ width: `${player.rating}%` }} />
+                      </div>
+
+                      {/* Stat bars */}
+                      <div className="space-y-1 mb-2">
+                        {statPairs.map(([label, , val]) => {
+                          const potOffset = pot - player.rating;
+                          const potVal = Math.min(99, val + potOffset);
+                          const grade = val >= 90 ? 'S' : val >= 80 ? 'A' : val >= 70 ? 'B' : val >= 60 ? 'C' : 'D';
+                          const gc = val >= 90 ? 'text-amber-400' : val >= 80 ? 'text-emerald-400' : val >= 70 ? 'text-teal-400' : val >= 60 ? 'text-slate-300' : 'text-rose-400';
+                          return (
+                            <div key={label} className="flex items-center gap-1.5">
+                              <span className={`w-5 text-[8px] font-black font-mono ${gc} shrink-0`}>{grade}</span>
+                              <span className="w-6 text-[8px] text-slate-500 font-mono shrink-0">{label}</span>
+                              <div className="flex-1 bg-slate-950 h-1.5 rounded-full overflow-hidden relative">
+                                <div className="absolute inset-y-0 left-0 bg-amber-500/25" style={{ width: `${potVal}%` }} />
+                                <div className="absolute inset-y-0 left-0 bg-teal-500 rounded-full" style={{ width: `${val}%` }} />
                               </div>
+                              <span className="w-12 text-right text-[8px] font-mono text-slate-400 shrink-0">{val}<span className="text-slate-600">/{potVal}</span></span>
                             </div>
-                          </td>
-                          <td className="py-3 text-center font-mono text-slate-400 font-bold">
-                            {player.goals} Goals / {player.assists} Asts
-                          </td>
-                          <td className="py-3 text-center">
-                            <div className="flex gap-2 text-[8px] text-slate-500 font-mono justify-center">
-                              <span>
-                                PAC:{" "}
-                                <strong className="text-slate-300">
-                                  {player.attributes?.pace || player.rating}
-                                </strong>
-                              </span>
-                              <span>
-                                SHO:{" "}
-                                <strong className="text-slate-300">
-                                  {player.attributes?.shooting || player.rating}
-                                </strong>
-                              </span>
-                              <span>
-                                PAS:{" "}
-                                <strong className="text-slate-300">
-                                  {player.attributes?.passing || player.rating}
-                                </strong>
-                              </span>
-                              <span>
-                                DEF:{" "}
-                                <strong className="text-slate-300">
-                                  {player.attributes?.defending ||
-                                    player.rating}
-                                </strong>
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-3 text-right font-mono font-bold text-white text-sm">
-                            ${player.marketValue.toLocaleString()}
-                          </td>
-                          <td className="py-3 text-right">
-                            <div className="flex justify-end gap-1.5">
-                              <button
-                                onClick={() => sellPlayerFromSquad(player)}
-                                disabled={player.isStarting}
-                                className="px-2 py-1 bg-rose-500/10 hover:bg-rose-500 disabled:opacity-30 disabled:pointer-events-none text-rose-455 hover:text-black font-extrabold uppercase text-[9px] rounded-lg transition-all cursor-pointer"
-                              >
-                                SELL
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          );
+                        })}
+                      </div>
+
+                      {/* Footer row */}
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <div className="flex items-center gap-2 text-[8px] font-mono text-slate-500">
+                          <span>⚽ {player.goals}G</span>
+                          <span>🎯 {player.assists ?? 0}A</span>
+                          <span className={player.stamina < 60 ? 'text-rose-400' : 'text-emerald-400'}>
+                            💪 {Math.round(player.stamina)}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[8px] font-mono text-slate-600">${(player.marketValue / 1000000).toFixed(1)}M</span>
+                          <button
+                            onClick={() => sellPlayerFromSquad(player)}
+                            disabled={player.isStarting}
+                            className="px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500 disabled:opacity-30 disabled:pointer-events-none text-rose-400 hover:text-black font-black uppercase text-[8px] rounded transition-all cursor-pointer"
+                          >
+                            SELL
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -1386,8 +1600,10 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                 </div>
               </div>
             </div>
+            {/* All players — first team + youth */}
             <div className="space-y-4">
-              {userClub.squad.map((p) => {
+              {[...userClub.squad, ...(userClub.youthSquad || [])].map((p) => {
+                const isYouthPlayer = p.isYouth === true;
                 const ageFactor =
                   p.age < 23
                     ? "text-emerald-400"
@@ -1395,15 +1611,21 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                       ? "text-rose-400"
                       : "text-slate-300";
 
-                const uniqueCoaches = new Set();
+                const uniqueCoaches = new Set<string>();
                 const allCoachesAvailable = [userClub.coach, ...(userClub.coaches || [])].filter((c) => {
                   if (!c || !c.id) return false;
                   if (uniqueCoaches.has(c.id)) return false;
                   uniqueCoaches.add(c.id);
                   return true;
                 });
+                // Mark which coaches are already assigned to another player
+                const allPlayersCombined = [...userClub.squad, ...(userClub.youthSquad || [])];
+                const coachAssignments: Record<string, string> = {};
+                allPlayersCombined.forEach(pl => {
+                  if (pl.focusedCoachId && pl.id !== p.id) coachAssignments[pl.focusedCoachId] = pl.name;
+                });
                 const assignedCoach = allCoachesAvailable.find((c) => c.id === p.focusedCoachId);
-                const focusedCount = userClub.squad.filter((pl) => pl.focusedCoachId).length;
+                const focusedCount = allPlayersCombined.filter((pl) => pl.focusedCoachId).length;
                 const canAssignMore = focusedCount < 6;
 
                 return (
@@ -1459,11 +1681,14 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                           className="w-full md:w-64 bg-slate-950 border border-white/10 text-xs font-bold text-slate-300 py-2 px-3 rounded-lg outline-none cursor-pointer focus:border-sky-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <option value="">-- No Coach (Off duty) --</option>
-                          {allCoachesAvailable.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name} ({c.specialty} • OVR {c.rating})
-                            </option>
-                          ))}
+                          {allCoachesAvailable.map((c) => {
+                            const isUnavailable = !!coachAssignments[c.id];
+                            return (
+                              <option key={c.id} value={c.id} disabled={isUnavailable}>
+                                {c.name} ({c.specialty} • OVR {c.rating}){isUnavailable ? ` — Unavailable (assigned to ${coachAssignments[c.id]})` : ''}
+                              </option>
+                            );
+                          })}
                         </select>
                         {!p.focusedCoachId && !canAssignMore && (
                           <span className="text-[8px] text-rose-400 uppercase tracking-widest font-mono mt-1">
@@ -1530,6 +1755,34 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {/* Development Growth History Log */}
+                    {p.developmentLog && p.developmentLog.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-white/5">
+                        <div className="text-[9px] uppercase tracking-widest text-slate-500 font-mono font-bold mb-2 flex items-center gap-1">
+                          📈 Growth History
+                          <span className="text-slate-600">— Last {Math.min(p.developmentLog.length, 5)} weeks</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {p.developmentLog.slice(-5).reverse().map((log, li) => (
+                            <div key={li} className="bg-emerald-950/40 border border-emerald-500/15 rounded px-2 py-1 text-[9px] font-mono">
+                              <span className="text-slate-500">Wk {log.week}: </span>
+                              {Object.entries(log.changes).map(([attr, delta]) => (
+                                <span key={attr} className={`mr-1 font-bold ${delta > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  {attr.slice(0, 3).toUpperCase()} {delta > 0 ? '+' : ''}{delta}
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Youth badge */}
+                    {isYouthPlayer && (
+                      <div className="mt-2 text-[9px] text-amber-400 font-mono uppercase tracking-wider bg-amber-950/30 border border-amber-500/20 rounded px-2 py-1 inline-flex items-center gap-1">
+                        🌱 Youth Academy Player — Potential ceiling: <span className="font-black text-sky-400">{p.potentialRating || '?'} OVR</span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1622,29 +1875,38 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between pt-2 border-t border-white/5 mt-auto">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pt-2 border-t border-white/5 mt-auto gap-2">
                         <div className="font-mono text-left">
                           <span className="text-[8px] text-slate-500 block uppercase font-bold">Transfer value</span>
                           <span className="text-xs text-white font-black">${(y.marketValue || (y.rating * 125000)).toLocaleString()}</span>
                         </div>
-                        <button
-                          onClick={() => {
-                            if (userClub.squad.length >= 30) {
-                              showMessage("Your active senior squad is at capacity (Max 30 players). Re-organize or sell a player first!");
-                              return;
-                            }
-                            const seniorYouthCount = userClub.squad.filter(p => p.age < 21 || p.isYouth).length;
-                            if (seniorYouthCount >= 10) {
-                              showMessage("Strict regulation limit reached! A maximum of 10 youth players are allowed in your active senior squad roster.");
-                              return;
-                            }
-                            onPromoteYouth?.(y.id);
-                            showMessage(`Congratulations! ${y.name} promoted successfully to the active first team squad!`);
-                          }}
-                          className="bg-emerald-500 text-black hover:bg-emerald-400 font-bold text-[10px] uppercase tracking-wider py-2 px-4 rounded-lg shadow-[0_0_12px_rgba(16,185,129,0.15)] flex items-center gap-1.5 transition-all cursor-pointer"
-                        >
-                          Include in Senior Squad
-                        </button>
+                        <div className="flex gap-2 flex-wrap justify-end">
+                          <button
+                            onClick={() => {
+                              const fee = y.marketValue || y.rating * 125000;
+                              if (window.confirm(`Sell ${y.name} to the transfer market for $${fee.toLocaleString()}?`)) {
+                                onSellYouth?.(y.id, fee);
+                                showMessage(`${y.name} sold for $${fee.toLocaleString()}!`);
+                              }
+                            }}
+                            className="bg-rose-500/15 hover:bg-rose-500 text-rose-400 hover:text-black font-bold text-[9px] uppercase tracking-wider py-2 px-3 rounded-lg transition-all cursor-pointer"
+                          >
+                            Sell
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (userClub.squad.length >= squadCap) {
+                                showMessage(`Senior squad at capacity (Max ${squadCap}). Sell a player first!`);
+                                return;
+                              }
+                              onPromoteYouth?.(y.id);
+                              showMessage(`${y.name} promoted to the first team!`);
+                            }}
+                            className="bg-emerald-500 text-black hover:bg-emerald-400 font-bold text-[9px] uppercase tracking-wider py-2 px-3 rounded-lg transition-all cursor-pointer"
+                          >
+                            Promote
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1653,6 +1915,21 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* OPPOSITION SCOUT VIEW */}
+      {activeSubTab === "SCOUT" && (
+        <ScoutTab
+          allClubs={allClubs}
+          userClub={userClub}
+          userBalance={userBalance}
+          squadCap={squadCap}
+          scoutedClubId={scoutedClubId}
+          setScoutedClubId={setScoutedClubId}
+          onBuyPlayer={onBuyPlayer}
+          onTapPlayer={onTapPlayer}
+          showMessage={showMessage}
+        />
       )}
 
       {/* COACHES VIEW */}
@@ -1932,6 +2209,44 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                   : `UPGRADE FOR $${medicalCost.toLocaleString()}`}
               </button>
             </div>
+            {/* ACCOMMODATION / HOSTEL */}
+            <div className="bg-[#0e1420] border border-white/5 rounded-2xl p-5 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-bold text-white uppercase flex items-center gap-1">
+                    🏨 Player Accommodation
+                  </span>
+                  <span className="text-xs font-mono font-bold text-violet-400">
+                    Lvl {userClub.accommodationFacilities || 1}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mb-2 h-12">
+                  Expand club dormitory and hostel capacity. Each level raises your
+                  maximum squad size by 5 (Lv1: 30 → Lv5: 50 players).
+                </p>
+                <div className="text-[10px] font-mono text-violet-400 mb-2">
+                  Current cap: <span className="font-black text-white">{squadCap} players</span>
+                  {(userClub.accommodationFacilities || 1) < 5 && (
+                    <span className="text-slate-500"> → next: {squadCap + 5}</span>
+                  )}
+                </div>
+                <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden mb-4">
+                  <div
+                    className="h-full bg-violet-500"
+                    style={{ width: `${Math.min(100, (userClub.accommodationFacilities || 1) * 20)}%` }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={() => onUpgradeFacilities("accommodation", accommodationCost)}
+                disabled={userBalance < accommodationCost || (userClub.accommodationFacilities || 1) >= 5}
+                className="w-full py-2 bg-violet-500 hover:bg-violet-400 disabled:bg-slate-800 disabled:text-slate-600 disabled:opacity-50 text-black uppercase tracking-wider font-extrabold text-[10px] rounded-lg transition-all cursor-pointer"
+              >
+                {(userClub.accommodationFacilities || 1) >= 5
+                  ? "MAX LEVEL — 50 players"
+                  : `UPGRADE FOR $${accommodationCost.toLocaleString()}`}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2065,217 +2380,114 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                     <span className="text-slate-500">
                       REQUEST LIKELIHOOD FACTOR:
                     </span>
-                    <span
-                      className={`font-black uppercase ${
-                        getApprovalProbability(
-                          requestedAmount,
-                          boardBackingCount,
-                        ) >= 80
+                    <span className={`font-black uppercase ${
+                        getApprovalProbability(requestedAmount, boardBackingCount) >= 80
                           ? "text-emerald-400"
-                          : getApprovalProbability(
-                                requestedAmount,
-                                boardBackingCount,
-                              ) >= 50
-                            ? "text-amber-400"
-                            : "text-rose-400"
-                      }`}
-                    >
-                      {getApprovalProbability(
-                        requestedAmount,
-                        boardBackingCount,
-                      )}
-                      % (PROBABILITY)
+                          : getApprovalProbability(requestedAmount, boardBackingCount) >= 50
+                          ? "text-amber-400"
+                          : "text-rose-400"
+                      }`}>
+                      {getApprovalProbability(requestedAmount, boardBackingCount)}%
                     </span>
                   </div>
-                  <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden mt-1.5">
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        getApprovalProbability(
-                          requestedAmount,
-                          boardBackingCount,
-                        ) >= 80
-                          ? "bg-emerald-505 bg-emerald-500"
-                          : getApprovalProbability(
-                                requestedAmount,
-                                boardBackingCount,
-                              ) >= 50
-                            ? "bg-amber-500"
-                            : "bg-rose-500"
-                      }`}
-                      style={{
-                        width: `${getApprovalProbability(requestedAmount, boardBackingCount)}%`,
-                      }}
-                    ></div>
-                  </div>
                 </div>
-              </div>
 
-              <div className="pt-2 shrink-0">
                 <button
                   onClick={handleAskForBoardFunds}
-                  className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black uppercase text-xs rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                  
+                  className={`w-full py-3 text-sm font-black uppercase tracking-wider rounded-xl transition-all ${
+"bg-sky-500 hover:bg-sky-400 text-black cursor-pointer"
+                  }`}
                 >
-                  <Landmark className="w-4 h-4" />
-                  SUBMIT APPLIED FINANCE REQUEST (Attempts: {boardBackingCount})
+                  {boardBackingCount < 3 ? "Submit Board Backing Request" : `Apply Again (${boardBackingCount - 2} extra, odds reduced)`}
                 </button>
+
+                {boardBackingResult && (
+                  <div className={`p-3 rounded-xl text-xs font-semibold border animate-fadeIn ${
+                    boardBackingResult.includes("Approved") || boardBackingResult.includes("approved")
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                  }`}>
+                    {boardBackingResult}
+                  </div>
+                )}
               </div>
             </div>
           </div>
-
-          {boardBackingResult && (
-            <div className="p-4 bg-slate-950/60 border border-sky-500/20 rounded-xl space-y-1.5 animate-fadeIn">
-              <div className="flex items-center gap-2.5 text-xs text-sky-400 font-black uppercase font-mono">
-                <CheckCircle2 className="w-5 h-5 text-sky-400" />
-                <span>Executive Decision Dispatch</span>
-              </div>
-              <p className="text-[11.5px] text-slate-350">
-                {boardBackingResult}
-              </p>
-            </div>
-          )}
         </div>
       )}
 
-      {/* MANAGER PROFILE VIEW */}
+      {/* PROFILE VIEW */}
       {activeSubTab === "PROFILE" && (
-        <div className="animate-fadeIn space-y-4">
-          <div className="bg-[#121620] border border-white/10 rounded-2xl p-6 overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-tr from-sky-500/10 to-transparent pointer-events-none"></div>
-
-            <div className="flex items-center gap-4 mb-6 relative">
-              <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center shrink-0">
-                <Briefcase className="w-8 h-8 text-sky-400" />
+        <div className="animate-fadeIn">
+          <div className="bg-[#121620] border border-white/10 rounded-2xl p-6 space-y-6">
+            <div className="flex flex-col md:flex-row items-start gap-6">
+              <div className="w-20 h-20 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center shrink-0">
+                <span className="text-3xl">👔</span>
               </div>
               <div className="flex-1">
-                <h3 className="text-xl font-bold text-white tracking-tight">
-                  {managerName}
-                </h3>
-                <div className="flex items-center gap-3 text-xs text-slate-400 font-mono mt-0.5">
-                  <span className="flex items-center gap-1.5">
-                    <Award className="w-3.5 h-3.5 text-amber-500" /> Lv.{" "}
-                    {managerSkills.level} Profile
-                  </span>
-                  <span>
-                    XP: {managerSkills.xp} / {managerSkills.level * 1000}
-                  </span>
-                </div>
-                <div className="mt-2 w-full max-w-xs bg-slate-900 h-1.5 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-sky-500 transition-all duration-700"
-                    style={{
-                      width: `${(managerSkills.xp / (managerSkills.level * 1000)) * 100}%`,
-                    }}
-                  ></div>
-                </div>
-              </div>
-              <div className="shrink-0 text-center bg-slate-900 border border-white/10 p-2 px-4 rounded-xl">
-                <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-0.5">
-                  Unspent Points
-                </div>
-                <div className="text-2xl font-black text-amber-500">
-                  {managerSkills.skillPoints}
+                <h3 className="text-lg font-black text-white">{managerName || "The Manager"}</h3>
+                <div className="text-xs text-slate-400 mt-1 font-mono">Club: {userClub.name} • Season Manager</div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: "Manager XP", value: managerSkills.xp, color: "text-sky-400" },
+                    { label: "Level", value: managerSkills.level, color: "text-amber-400" },
+                    { label: "Skill Points", value: managerSkills.skillPoints, color: "text-emerald-400" },
+                    { label: "Negotiator", value: managerSkills.negotiator, color: "text-violet-400" },
+                  ].map(stat => (
+                    <div key={stat.label} className="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+                      <div className="text-[9px] uppercase text-slate-500 font-mono tracking-wider">{stat.label}</div>
+                      <div className={`text-lg font-black font-mono mt-1 ${stat.color}`}>{stat.value}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
-            <div className="space-y-4">
-              <h4 className="text-sm font-bold uppercase tracking-widest text-slate-300 border-b border-white/10 pb-2">
-                Manager Trait Trees
-              </h4>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-slate-900 border border-white/5 rounded-xl p-4 flex flex-col gap-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <TrendingUp className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs font-bold text-white uppercase tracking-wider">
-                      Tactical Mastermind
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 flex-1">
-                    Boosts passing metrics and overall match performance
-                    directly during the simulation clock.
-                  </p>
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
-                    <span className="text-xs font-mono font-bold text-emerald-400">
-                      Lv. {managerSkills.tacticalMastermind}
-                    </span>
-                    <button
-                      onClick={() => onUpgradeSkill("tacticalMastermind")}
-                      disabled={
-                        managerSkills.skillPoints <= 0 ||
-                        managerSkills.tacticalMastermind >= 5
-                      }
-                      className="px-3 py-1 bg-sky-500 hover:bg-sky-450 disabled:bg-slate-800 disabled:text-slate-600 text-black text-[9px] font-black tracking-widest uppercase rounded-md transition-all"
-                    >
-                      {managerSkills.tacticalMastermind >= 5
-                        ? "MAXED"
-                        : "UPGRADE"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-white/5 rounded-xl p-4 flex flex-col gap-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <DollarSign className="w-4 h-4 text-amber-500" />
-                    <span className="text-xs font-bold text-white uppercase tracking-wider">
-                      Master Negotiator
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 flex-1">
-                    Reduces player transfer costs proportionally to your skill
-                    level on the scout market.
-                  </p>
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
-                    <span className="text-xs font-mono font-bold text-amber-500">
-                      Lv. {managerSkills.negotiator}
-                    </span>
-                    <button
-                      onClick={() => onUpgradeSkill("negotiator")}
-                      disabled={
-                        managerSkills.skillPoints <= 0 ||
-                        managerSkills.negotiator >= 5
-                      }
-                      className="px-3 py-1 bg-sky-500 hover:bg-sky-450 disabled:bg-slate-800 disabled:text-slate-600 text-black text-[9px] font-black tracking-widest uppercase rounded-md transition-all"
-                    >
-                      {managerSkills.negotiator >= 5 ? "MAXED" : "UPGRADE"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-white/5 rounded-xl p-4 flex flex-col gap-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Sparkles className="w-4 h-4 text-sky-400" />
-                    <span className="text-xs font-bold text-white uppercase tracking-wider">
-                      Youth Development
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 flex-1">
-                    Accelerates training progression and potential growth for
-                    academy/young players.
-                  </p>
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
-                    <span className="text-xs font-mono font-bold text-sky-400">
-                      Lv. {managerSkills.youthDevelopment}
-                    </span>
-                    <button
-                      onClick={() => onUpgradeSkill("youthDevelopment")}
-                      disabled={
-                        managerSkills.skillPoints <= 0 ||
-                        managerSkills.youthDevelopment >= 5
-                      }
-                      className="px-3 py-1 bg-sky-500 hover:bg-sky-450 disabled:bg-slate-800 disabled:text-slate-600 text-black text-[9px] font-black tracking-widest uppercase rounded-md transition-all"
-                    >
-                      {managerSkills.youthDevelopment >= 5
-                        ? "MAXED"
-                        : "UPGRADE"}
-                    </button>
-                  </div>
-                </div>
+            {/* Skill Tree */}
+            <div className="border-t border-white/5 pt-4">
+              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Manager Skill Tree</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(["tacticalMastermind", "negotiator", "youthDevelopment"] as const).map(skill => {
+                  const level = managerSkills[skill] as number;
+                  const cost = (level + 1) * 2;
+                  const canUpgrade = managerSkills.skillPoints >= cost;
+                  const labels: Record<string, string> = {
+                    tacticalMastermind: "Tactical Mastermind",
+                    negotiator: "Negotiator",
+                    youthDevelopment: "Youth Development",
+                  };
+                  return (
+                    <div key={skill} className="bg-slate-900/60 border border-white/5 rounded-xl p-4 flex items-center justify-between gap-4">
+                      <div>
+                        <div className="text-xs font-black text-white">{labels[skill]}</div>
+                        <div className="text-[9px] text-slate-400 font-mono mt-0.5">Level {level} / 5</div>
+                        <div className="flex gap-1 mt-2">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} className={`w-5 h-1.5 rounded-full ${i < level ? "bg-sky-500" : "bg-slate-700"}`} />
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => onUpgradeSkill(skill)}
+                        disabled={!canUpgrade || level >= 5}
+                        className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all shrink-0 ${
+                          canUpgrade && level < 5
+                            ? "bg-sky-500 text-black hover:bg-sky-400 cursor-pointer"
+                            : "bg-slate-700 text-slate-500 cursor-not-allowed"
+                        }`}
+                      >
+                        {level >= 5 ? "Maxed" : `Upgrade (${cost}pts)`}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 };

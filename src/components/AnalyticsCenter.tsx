@@ -4,6 +4,8 @@ import { Club, Player } from '../types';
 
 interface AnalyticsCenterProps {
   allClubs: Club[];
+  leagueFixtures?: import('../types').Fixture[];
+  tournamentFixtures?: import('../types').Fixture[];
   onTapPlayer: (id: string) => void;
   onTapClub: (id: string) => void;
 }
@@ -319,9 +321,7 @@ export const AnalyticsCenter: React.FC<AnalyticsCenterProps> = ({
             </div>
           )}
         </div>
-
       </div>
-
     </div>
   );
 };

@@ -199,12 +199,15 @@ export const generateSquadForClub = (clubId: string, ratingFloor: number): Playe
       morale,
       goals: 0,
       assists: 0,
+      saves: 0,
       yellowCards: 0,
       redCards: 0,
       matchRatings: [],
       marketValue: marketValue > 80000 ? marketValue : randRange(150, 300) * 1000,
       attributes: generatePlayerAttributes(pos, rating),
-      isStarting
+      isStarting,
+      fatigue: 100,
+      appearances: 0,
     });
   });
 
@@ -310,11 +313,14 @@ export const generateWonderkid = (id: string, isYouth = false): Player => {
     morale,
     goals: 0,
     assists: 0,
+    saves: 0,
     yellowCards: 0,
     redCards: 0,
     matchRatings: [],
     marketValue: randRange(2, 6) * 500000, // cheaper initially
     attributes: generatePlayerAttributes(pos, rating),
-    isStarting: false
+    isStarting: false,
+    fatigue: 100,
+    appearances: 0,
   };
 };

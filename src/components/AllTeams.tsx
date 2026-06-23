@@ -5,13 +5,17 @@ import { Club } from '../types';
 interface AllTeamsProps {
   allClubs: Club[];
   onTapClub: (clubId: string) => void;
+  onTakeoverClub?: (clubId: string) => void;
   userClubId: string;
+  userBalance?: number;
 }
 
 export const AllTeams: React.FC<AllTeamsProps> = ({
   allClubs,
   onTapClub,
+  onTakeoverClub,
   userClubId,
+  userBalance = 0,
 }) => {
   const [teamSearch, setTeamSearch] = useState('');
   const [filterDivision, setFilterDivision] = useState<'ALL' | 'LEAGUE' | 'CUP'>('ALL');
@@ -154,9 +158,29 @@ export const AllTeams: React.FC<AllTeamsProps> = ({
                 {/* Card Foot action indicator */}
                 <div className="flex justify-between items-center text-[9px] text-slate-500 font-bold uppercase tracking-wider w-full border-t border-white/5 pt-2 mt-2 font-mono">
                   <span>Squad: {club.squad.length} Players</span>
-                  <span className="group-hover:text-sky-400 transition-all flex items-center gap-1">
-                    Tap Dossier <ArrowRight className="w-3 h-3 group-hover:transform group-hover:translate-x-0.5 transition-all" />
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {!isUser && onTakeoverClub && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const takeoverCost = Math.round((club.reputation ?? 50) * 50000);
+                          if (userBalance < takeoverCost) {
+                            alert(`Need $${takeoverCost.toLocaleString()} to take over ${club.name}. You have $${userBalance.toLocaleString()}.`);
+                            return;
+                          }
+                          if (window.confirm(`Take over ${club.name} for $${takeoverCost.toLocaleString()}?`)) {
+                            onTakeoverClub(club.id);
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-violet-500/20 hover:bg-violet-500 text-violet-400 hover:text-black text-[8px] font-black uppercase rounded transition-all cursor-pointer"
+                      >
+                        Take Over
+                      </button>
+                    )}
+                    <span className="group-hover:text-sky-400 transition-all flex items-center gap-1">
+                      Dossier <ArrowRight className="w-3 h-3 group-hover:transform group-hover:translate-x-0.5 transition-all" />
+                    </span>
+                  </div>
                 </div>
               </button>
             );

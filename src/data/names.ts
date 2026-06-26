@@ -1,4 +1,5 @@
 import { Club, Player, Coach, PlayerAttributes } from '../types';
+import { calcRealisticMarketValue } from './transferMarket';
 
 export const CLUB_POOLS = [
   { name: 'Crestwood United', color: '#10b981', secondary: '#047857' }, // Theme green
@@ -179,12 +180,10 @@ export const generateSquadForClub = (clubId: string, ratingFloor: number): Playe
     const stamina = randRange(85, 100);
     const morale = randRange(80, 100);
 
-    const valuationFactor = Math.pow(rating - 55, 3.0) * 9000;
-    const marketValue = Math.round(valuationFactor / 50000) * 50000 + randRange(0, 4) * 10000;
-
     // First 11 index elements represent starters, remaining 4 are bench warmers
     const isStarting = idx < 11;
     const age = randRange(18, 34);
+    const marketValue = Math.max(100_000, calcRealisticMarketValue(rating, age));
     const potentialRating = rating + Math.max(0, 30 - age) + randRange(0, 5);
 
     squad.push({
@@ -203,7 +202,7 @@ export const generateSquadForClub = (clubId: string, ratingFloor: number): Playe
       yellowCards: 0,
       redCards: 0,
       matchRatings: [],
-      marketValue: marketValue > 80000 ? marketValue : randRange(150, 300) * 1000,
+      marketValue: marketValue,
       attributes: generatePlayerAttributes(pos, rating),
       isStarting,
       fatigue: 100,
@@ -323,4 +322,4 @@ export const generateWonderkid = (id: string, isYouth = false): Player => {
     fatigue: 100,
     appearances: 0,
   };
-};
+}

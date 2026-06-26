@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Award, Calendar, Trophy, Medal, ChevronLeft, ChevronRight, Landmark, Swords, Shield, Play } from 'lucide-react';
 import { Club, Fixture, BracketNode } from '../types';
-import { getGroupStandingsForGroup } from '../App'; // If needed, we can also write the logic inline to be safe
+import { getGroupStandingsForGroup } from '../data/tournamentUtils';
 import { CupBracket } from './CupBracket';
 
 interface LeagueTableProps {

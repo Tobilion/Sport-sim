@@ -26,6 +26,16 @@ const randomNationality = (region?: keyof typeof NATIONALITIES): string => {
   return ALL_NATIONALITIES[randRange(0, ALL_NATIONALITIES.length - 1)];
 };
 
+// ── Realistic market value calculator ────────────────────────────────────────
+// Calibrated so rating 95 (prime, 23yo) ≈ $200M, rating 60 ≈ $500K
+// Age mult: youth premium peaks at ~22, 28+ gets a discount
+export function calcRealisticMarketValue(rating: number, age: number): number {
+  const base = 17 * Math.exp(0.1712 * rating);
+  const ageMult = Math.max(0.2, 1.4 - (age - 20) * 0.07);
+  const variance = 0.9 + Math.random() * 0.2; // ±10% noise
+  return Math.round((base * ageMult * variance) / 500_000) * 500_000;
+}
+
 // ── Market player factory ─────────────────────────────────────────────────────
 function makeMarketPlayer(
   idx: number,
@@ -42,8 +52,7 @@ function makeMarketPlayer(
   const potentialRating = isYouth
     ? Math.min(99, rating + randRange(18, 32))
     : Math.min(99, rating + randRange(2, 12));
-  const valFactor = Math.pow(Math.max(0, rating - 50), 3.0) * 15000;
-  const marketValue = Math.max(50000, Math.round(valFactor / 25000) * 25000 + randRange(0, 3) * 10000);
+  const marketValue = Math.max(100_000, calcRealisticMarketValue(rating, age));
 
   return {
     id: `market-${pos.toLowerCase()}-${idx}-${Date.now()}-${randRange(100, 9999)}`,
@@ -204,6 +213,7 @@ export function getHireableCoaches(): Coach[] {
       cost: wage * 52,
     });
   }
+
   _cachedCoaches = coaches;
   return coaches;
 }

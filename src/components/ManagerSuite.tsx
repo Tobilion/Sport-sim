@@ -41,8 +41,13 @@ import {
   getHireableCoaches,
   refreshMarketPool,
   refreshCoachPool,
+  calcRealisticMarketValue,
 } from "../data/transferMarket";
 import { SquadPitch } from "./SquadPitch";
+import { TransferMarketWindow } from "../features/transfer-market";
+import { BoardObjectives } from "../features/board-objectives";
+import type { TransferMarketState } from "../features/transfer-market";
+import type { BoardState } from "../features/board-objectives";
 
 interface ManagerSuiteProps {
   userClub: Club;
@@ -71,6 +76,10 @@ interface ManagerSuiteProps {
   onBuyCoach?: (newCoach: Coach, cost: number) => void;
   onDismissCoach?: (coachId: string, refundAmount: number) => void;
   currentWeek?: number;
+  transferMarketState?: TransferMarketState;
+  boardState?: BoardState;
+  onUpdateTransferMarketState?: (next: TransferMarketState) => void;
+  onAddNotification?: (title: string, body: string) => void;
 }
 
 const DualStatProgress: React.FC<{ label: string; current: number; potential: number }> = ({ label, current, potential }) => {
@@ -336,6 +345,10 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
   onBuyCoach,
   onDismissCoach,
   currentWeek = 1,
+  transferMarketState,
+  boardState,
+  onUpdateTransferMarketState,
+  onAddNotification,
 }) => {
   // Inner states
   const squadCap = 25 + (userClub.accommodationFacilities || 1) * 5;
@@ -441,17 +454,14 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
       const fName = FIRST_NAMES[randRange(0, FIRST_NAMES.length - 1)];
       const lName = LAST_NAMES[randRange(0, LAST_NAMES.length - 1)];
       const rating = randRange(70, 92);
-
-      const valFactor = Math.pow(rating - 55, 3.1) * 12500;
-      const calculatedValue =
-        Math.round(valFactor / 50000) * 50000 + randRange(0, 4) * 15000;
+      const age = randRange(19, 34);
 
       list.push({
         id: `transfer-player-${idx}-${Date.now()}-${randRange(100, 999)}`,
         name: `${fName} ${lName}`,
         position: pos,
         rating,
-        age: randRange(19, 34),
+        age,
         stamina: 100,
         morale: 100,
         goals: 0,
@@ -460,10 +470,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
         yellowCards: 0,
         redCards: 0,
         matchRatings: [],
-        marketValue:
-          calculatedValue > 100000
-            ? calculatedValue
-            : randRange(150, 290) * 1000,
+        marketValue: Math.max(100_000, calcRealisticMarketValue(rating, age)),
         attributes: generatePlayerAttributes(pos, rating),
         isStarting: false,
         fatigue: 100,
@@ -484,8 +491,6 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
       // Higher floor OVR (75-95) and younger bias (19-27)
       const rating = randRange(75, 95);
       const age = randRange(19, 27);
-      const valFactor = Math.pow(rating - 55, 3.1) * 12500;
-      const calculatedValue = Math.round(valFactor / 50000) * 50000 + randRange(0, 4) * 15000;
       list.push({
         id: `refresh-player-${i}-${Date.now()}-${randRange(100, 999)}`,
         name: `${fName} ${lName}`,
@@ -501,7 +506,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
         yellowCards: 0,
         redCards: 0,
         matchRatings: [],
-        marketValue: calculatedValue > 100000 ? calculatedValue : randRange(200, 350) * 1000,
+        marketValue: Math.max(100_000, calcRealisticMarketValue(rating, age)),
         attributes: generatePlayerAttributes(pos, rating),
         isStarting: false,
         fatigue: 100,
@@ -527,7 +532,7 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
       yellowCards: 0,
       redCards: 0,
       matchRatings: [],
-      marketValue: Math.round(Math.pow(eliteRating - 55, 3.1) * 12500 / 50000) * 50000,
+      marketValue: Math.max(100_000, calcRealisticMarketValue(eliteRating, randRange(20, 24))),
       attributes: generatePlayerAttributes(elitePos, eliteRating),
       isStarting: false,
       fatigue: 100,
@@ -1143,6 +1148,27 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
       {/* TRANSFER MARKET VIEW */}
       {activeSubTab === "TRANSFERS" && (
         <div className="space-y-6 animate-fadeIn">
+          {/* ── Transfer Market Window Feature ──────────────────────────────── */}
+          {transferMarketState && onUpdateTransferMarketState && (
+            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-white flex items-center gap-2 mb-4">
+                <ShoppingCart className="w-5 h-5 text-emerald-400" />
+                Transfer Window
+              </h3>
+              <TransferMarketWindow
+                marketPool={scoutedTransferList}
+                userClub={userClub}
+                allClubs={allClubs}
+                userBalance={userBalance}
+                currentWeek={currentWeek}
+                marketState={transferMarketState}
+                onUpdateMarketState={onUpdateTransferMarketState}
+                onBuyPlayer={onBuyPlayer}
+                onSellPlayer={onSellPlayer}
+                onAddNotification={(title, body) => onAddNotification?.(title, body)}
+              />
+            </div>
+          )}
           <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 space-y-4">
             <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-4 border-b border-white/5 pb-4">
               <div>
@@ -2253,166 +2279,82 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
 
       {/* BOARDROOM VIEW */}
       {activeSubTab === "BOARDROOM" && (
-        <div className="bg-[#121620] border border-white/10 rounded-2xl p-6 relative overflow-hidden animate-fadeIn space-y-6">
-          <div className="absolute inset-0 bg-gradient-to-r from-sky-500/5 to-transparent pointer-events-none"></div>
+        <div className="space-y-4 animate-fadeIn">
+          {/* Board Objectives */}
+          {boardState ? (
+            <BoardObjectives boardState={boardState} currentWeek={currentWeek} />
+          ) : (
+            <div className="bg-[#121620] border border-white/10 rounded-2xl p-8 text-center">
+              <p className="text-slate-500 text-sm">Board objectives generate when you start a new career</p>
+            </div>
+          )}
 
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-[#1e293b] rounded-xl flex items-center justify-center border border-white/10 shrink-0">
-                <Landmark className="w-6 h-6 text-sky-400" />
-              </div>
+          {/* ── Capital Injection ───────────────────────────────────────────── */}
+          <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 space-y-4">
+            <div className="flex items-center gap-2 border-b border-white/5 pb-4">
+              <span className="text-xl">💼</span>
               <div>
-                <h3 className="text-sm font-black text-white uppercase tracking-tight">
-                  Executive Club Boardroom
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Review contractual objectives, manager standing ratings, and
-                  request critical emergency funding.
-                </p>
+                <h3 className="text-sm font-black uppercase tracking-widest text-white">Apply for Funds</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Submit a capital injection proposal to the board</p>
               </div>
             </div>
 
-            <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-xl text-center">
-              <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">
-                Board Status Rating
-              </span>
-              <strong className="text-sm font-black text-emerald-400 block uppercase mt-0.5">
-                secured (EXCELLENT)
-              </strong>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
-            <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-4">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-[#94a3b8] font-mono border-b border-white/5 pb-1">
-                Executive Contract Overview
-              </h4>
-
-              <div className="space-y-3 text-xs">
-                <div className="flex justify-between font-medium">
-                  <span className="text-slate-500">Current Position:</span>
-                  <span className="text-white font-bold">
-                    First Team Manager
-                  </span>
-                </div>
-                <div className="flex justify-between font-medium">
-                  <span className="text-slate-500">
-                    Contract Term Duration:
-                  </span>
-                  <span className="text-sky-400 font-bold">
-                    3 Years Remaining
-                  </span>
-                </div>
-                <div className="flex justify-between font-medium">
-                  <span className="text-slate-500">Board Approval Rate:</span>
-                  <span className="text-emerald-400 font-bold">
-                    88.5% (Trustworthy)
-                  </span>
-                </div>
-                <div className="flex justify-between font-medium">
-                  <span className="text-slate-500">Primary Objective:</span>
-                  <span className="text-amber-500 font-bold">
-                    Maintain safe standing & qualify Cup
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-[#1c2230]/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between space-y-4">
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-widest text-white font-mono border-b border-white/5 pb-1 flex items-center gap-1.5">
-                  <DollarSign className="w-4 h-4 text-emerald-450" />
-                  Apply for Custom Board Capital Funds
-                </h4>
-                <p className="text-[11px] text-slate-400 mt-2">
-                  Submit a customized capital projection plan. Funding requests
-                  carry dynamic director approval rates based strictly on the
-                  requested volume. Over-requesting harms board trust.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[10px] text-slate-400 uppercase font-mono tracking-wider block mb-1">
-                    Requested Amount ($):
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="50000"
-                      max="50000000"
-                      step="50000"
-                      value={requestedAmount}
-                      onChange={(e) =>
-                        setRequestedAmount(
-                          Math.max(50000, Number(e.target.value)),
-                        )
-                      }
-                      className="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white uppercase font-mono font-bold focus:outline-none focus:border-sky-500 flex-1"
-                    />
-                  </div>
-                </div>
-
-                {/* Predefined Quick Amounts */}
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {[10000000, 50000000, 100000000, 250000000, 500000000].map(
-                    (quickAmt) => (
-                      <button
-                        key={quickAmt}
-                        onClick={() => setRequestedAmount(quickAmt)}
-                        className={`px-2 py-1 text-[9px] uppercase font-mono font-extrabold rounded border transition-all cursor-pointer ${
-                          requestedAmount === quickAmt
-                            ? "bg-sky-500/20 text-sky-400 border-sky-400"
-                            : "bg-white/5 text-slate-400 border-white/5 hover:bg-white/10"
-                        }`}
-                      >
-                        $
-                        {quickAmt >= 1000000
-                          ? `${(quickAmt / 1000000).toFixed(0)}M`
-                          : `${(quickAmt / 1000).toFixed(0)}K`}
-                      </button>
-                    ),
-                  )}
-                </div>
-
-                <div className="bg-slate-950/60 p-2.5 rounded-xl border border-white/5 text-xs">
-                  <div className="flex justify-between font-mono text-[10px]">
-                    <span className="text-slate-500">
-                      REQUEST LIKELIHOOD FACTOR:
-                    </span>
-                    <span className={`font-black uppercase ${
-                        getApprovalProbability(requestedAmount, boardBackingCount) >= 80
-                          ? "text-emerald-400"
-                          : getApprovalProbability(requestedAmount, boardBackingCount) >= 50
-                          ? "text-amber-400"
-                          : "text-rose-400"
-                      }`}>
-                      {getApprovalProbability(requestedAmount, boardBackingCount)}%
-                    </span>
-                  </div>
-                </div>
-
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { label: "$50M",  value: 50_000_000  },
+                { label: "$100M", value: 100_000_000 },
+                { label: "$250M", value: 250_000_000 },
+                { label: "$500M", value: 500_000_000 },
+              ].map(({ label, value }) => (
                 <button
-                  onClick={handleAskForBoardFunds}
-                  
-                  className={`w-full py-3 text-sm font-black uppercase tracking-wider rounded-xl transition-all ${
-"bg-sky-500 hover:bg-sky-400 text-black cursor-pointer"
+                  key={value}
+                  onClick={() => setRequestedAmount(value)}
+                  className={`py-2 rounded-xl text-xs font-black uppercase tracking-wide border transition-all cursor-pointer ${
+                    requestedAmount === value
+                      ? "bg-sky-500/20 border-sky-500/50 text-sky-300"
+                      : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10"
                   }`}
                 >
-                  {boardBackingCount < 3 ? "Submit Board Backing Request" : `Apply Again (${boardBackingCount - 2} extra, odds reduced)`}
+                  {label}
                 </button>
-
-                {boardBackingResult && (
-                  <div className={`p-3 rounded-xl text-xs font-semibold border animate-fadeIn ${
-                    boardBackingResult.includes("Approved") || boardBackingResult.includes("approved")
-                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                      : "bg-rose-500/10 border-rose-500/30 text-rose-400"
-                  }`}>
-                    {boardBackingResult}
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-2 flex items-center gap-2">
+                <span className="text-slate-500 text-xs font-mono">$</span>
+                <input
+                  type="number"
+                  value={requestedAmount}
+                  onChange={e => setRequestedAmount(Number(e.target.value))}
+                  className="flex-1 bg-transparent text-white text-sm font-mono outline-none"
+                  min={1_000_000}
+                  step={1_000_000}
+                />
+              </div>
+              <button
+                onClick={handleAskForBoardFunds}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wide rounded-xl transition-all cursor-pointer shrink-0"
+              >
+                Submit Proposal
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-500 font-mono">
+              Approval odds: requests up to $100M = ~98% · up to $250M = ~85% · up to $500M = ~70% · above $500M = ~50%.
+              Each application beyond the 3rd reduces odds by 15pp.
+              Applications this season: <span className="text-sky-400 font-bold">{boardBackingCount}</span>
+            </div>
+
+            {boardBackingResult && (
+              <div className={`rounded-xl p-4 text-xs font-mono leading-relaxed border ${
+                boardBackingResult.startsWith("PROPOSAL APPROVED")
+                  ? "bg-emerald-900/30 border-emerald-700/40 text-emerald-300"
+                  : "bg-red-900/30 border-red-700/40 text-red-300"
+              }`}>
+                {boardBackingResult}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2427,67 +2369,66 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
               </div>
               <div className="flex-1">
                 <h3 className="text-lg font-black text-white">{managerName || "The Manager"}</h3>
-                <div className="text-xs text-slate-400 mt-1 font-mono">Club: {userClub.name} • Season Manager</div>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {[
-                    { label: "Manager XP", value: managerSkills.xp, color: "text-sky-400" },
-                    { label: "Level", value: managerSkills.level, color: "text-amber-400" },
-                    { label: "Skill Points", value: managerSkills.skillPoints, color: "text-emerald-400" },
-                    { label: "Negotiator", value: managerSkills.negotiator, color: "text-violet-400" },
-                  ].map(stat => (
-                    <div key={stat.label} className="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
-                      <div className="text-[9px] uppercase text-slate-500 font-mono tracking-wider">{stat.label}</div>
-                      <div className={`text-lg font-black font-mono mt-1 ${stat.color}`}>{stat.value}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Skill Tree */}
-            <div className="border-t border-white/5 pt-4">
-              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Manager Skill Tree</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {(["tacticalMastermind", "negotiator", "youthDevelopment"] as const).map(skill => {
-                  const level = managerSkills[skill] as number;
-                  const cost = (level + 1) * 2;
-                  const canUpgrade = managerSkills.skillPoints >= cost;
-                  const labels: Record<string, string> = {
-                    tacticalMastermind: "Tactical Mastermind",
-                    negotiator: "Negotiator",
-                    youthDevelopment: "Youth Development",
-                  };
-                  return (
-                    <div key={skill} className="bg-slate-900/60 border border-white/5 rounded-xl p-4 flex items-center justify-between gap-4">
-                      <div>
-                        <div className="text-xs font-black text-white">{labels[skill]}</div>
-                        <div className="text-[9px] text-slate-400 font-mono mt-0.5">Level {level} / 5</div>
-                        <div className="flex gap-1 mt-2">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <div key={i} className={`w-5 h-1.5 rounded-full ${i < level ? "bg-sky-500" : "bg-slate-700"}`} />
-                          ))}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => onUpgradeSkill(skill)}
-                        disabled={!canUpgrade || level >= 5}
-                        className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all shrink-0 ${
-                          canUpgrade && level < 5
-                            ? "bg-sky-500 text-black hover:bg-sky-400 cursor-pointer"
-                            : "bg-slate-700 text-slate-500 cursor-not-allowed"
-                        }`}
-                      >
-                        {level >= 5 ? "Maxed" : `Upgrade (${cost}pts)`}
-                      </button>
-                    </div>
-                  );
-                })}
+              <div className="text-xs text-slate-400 mt-1 font-mono">Club: {userClub.name} • Season Manager</div>
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: "Manager XP", value: managerSkills.xp, color: "text-sky-400" },
+                  { label: "Level", value: managerSkills.level, color: "text-amber-400" },
+                  { label: "Skill Points", value: managerSkills.skillPoints, color: "text-emerald-400" },
+                  { label: "Negotiator", value: managerSkills.negotiator, color: "text-violet-400" },
+                ].map(stat => (
+                  <div key={stat.label} className="bg-slate-900/60 border border-white/5 rounded-xl p-3 text-center">
+                    <div className="text-[9px] uppercase text-slate-500 font-mono tracking-wider">{stat.label}</div>
+                    <div className={`text-lg font-black font-mono mt-1 ${stat.color}`}>{stat.value}</div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
-        </div>
-      )}
 
-    </div>
+          {/* Skill Tree */}
+          <div className="border-t border-white/5 pt-4">
+            <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Manager Skill Tree</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(["tacticalMastermind", "negotiator", "youthDevelopment"] as const).map(skill => {
+                const level = managerSkills[skill] as number;
+                const cost = (level + 1) * 2;
+                const canUpgrade = managerSkills.skillPoints >= cost;
+                const labels: Record<string, string> = {
+                  tacticalMastermind: "Tactical Mastermind",
+                  negotiator: "Negotiator",
+                  youthDevelopment: "Youth Development",
+                };
+                return (
+                  <div key={skill} className="bg-slate-900/60 border border-white/5 rounded-xl p-4 flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-black text-white">{labels[skill]}</div>
+                      <div className="text-[9px] text-slate-400 font-mono mt-0.5">Level {level} / 5</div>
+                      <div className="flex gap-1 mt-2">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <div key={i} className={`w-5 h-1.5 rounded-full ${i < level ? "bg-sky-500" : "bg-slate-700"}`} />
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => onUpgradeSkill(skill)}
+                      disabled={!canUpgrade || level >= 5}
+                      className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all shrink-0 ${
+                        canUpgrade && level < 5
+                          ? "bg-sky-500 text-black hover:bg-sky-400 cursor-pointer"
+                          : "bg-slate-700 text-slate-500 cursor-not-allowed"
+                      }`}
+                    >
+                      {level >= 5 ? "Maxed" : `Upgrade (${cost}pts)`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
   );
-};
+}

@@ -94,6 +94,44 @@ import { AllTeams } from "./components/AllTeams";
 import { TrophiesCenter } from "./components/TrophiesCenter";
 import { PostMatchModal } from "./components/PostMatchModal";
 import { NotificationDrawer } from "./components/NotificationDrawer";
+import { AppNav } from "./components/AppNav";
+import { AppHeader } from "./components/AppHeader";
+import { MobileNav } from "./components/MobileNav";
+import { HalftimeModal } from "./components/modals/HalftimeModal";
+import { PressureModal } from "./components/modals/PressureModal";
+import { FixturesPage } from "./pages/FixturesPage";
+import { NewsPage } from "./pages/NewsPage";
+import { DUAL_SCHEDULE } from "./data/schedule";
+import { TransferMarketWindow } from "./features/transfer-market";
+import { BoardObjectives } from "./features/board-objectives";
+import { FinancialDashboard } from "./features/finances";
+import type { TransferMarketState } from "./features/transfer-market";
+import type { BoardState } from "./features/board-objectives";
+import type { FinancialEntry } from "./features/finances";
+import {
+  EMPTY_TRANSFER_STATE,
+  generateIncomingBids,
+  makeHistoryEntry,
+  purgeStaleBids,
+  getTransferWindowPhase,
+} from "./features/transfer-market";
+import {
+  INITIAL_BOARD_STATE,
+  generateSeasonObjectives,
+  refreshObjectiveProgress,
+  evalObjectivesForConfidence,
+  adjustConfidence,
+} from "./features/board-objectives";
+import {
+  buildWeeklyWageEntry,
+  buildMatchdayEntry,
+  buildTransferInEntry,
+  buildTransferOutEntry,
+  buildFacilityEntry,
+  buildLeaguePrizeEntry,
+  buildCupPrizeEntry,
+  buildObjectiveBonusEntry,
+} from "./features/finances";
 
 interface SaveSlot {
   id: string;
@@ -115,7 +153,7 @@ interface SaveSlot {
 }
 
 // Fixed constant for starting budget
-const START_BUDGET = 45000;
+const START_BUDGET = 2_000_000_000;
 
 // Prize money per finishing position (20-team league)
 const LEAGUE_PRIZE_MONEY = [
@@ -156,260 +194,14 @@ function generateLeagueFixtures20(clubIds: string[]): Fixture[] {
   return fixtures;
 }
 
-// 26-Week Dual Campaign Schedule (Premier League + Champions Cup concurrent alternating logic)
-export const DUAL_SCHEDULE = [
-  { week: 1, type: "league", label: "League Matchday 1" },
-  { week: 2, type: "league", label: "League Matchday 2" },
-  {
-    week: 3,
-    type: "tournament",
-    label: "Prestige Champions Cup - Group Stage R1",
-    stage: "Group",
-  },
-  { week: 4, type: "league", label: "League Matchday 3" },
-  { week: 5, type: "league", label: "League Matchday 4" },
-  {
-    week: 6,
-    type: "tournament",
-    label: "Prestige Champions Cup - Group Stage R2",
-    stage: "Group",
-  },
-  { week: 7, type: "league", label: "League Matchday 5" },
-  { week: 8, type: "league", label: "League Matchday 6" },
-  {
-    week: 9,
-    type: "tournament",
-    label: "Prestige Champions Cup - Group Stage R3",
-    stage: "Group",
-  },
-  { week: 10, type: "league", label: "League Matchday 7" },
-  { week: 11, type: "league", label: "League Matchday 8" },
-  {
-    week: 12,
-    type: "tournament",
-    label: "Prestige Champions Cup - Round of 16",
-    stage: "R16",
-  },
-  { week: 13, type: "league", label: "League Matchday 9" },
-  { week: 14, type: "league", label: "League Matchday 10" },
-  {
-    week: 15,
-    type: "tournament",
-    label: "Prestige Champions Cup - Quarter-Finals",
-    stage: "QF",
-  },
-  { week: 16, type: "league", label: "League Matchday 11" },
-  { week: 17, type: "league", label: "League Matchday 12" },
-  {
-    week: 18,
-    type: "tournament",
-    label: "Prestige Champions Cup - Semi-Finals",
-    stage: "SF",
-  },
-  { week: 19, type: "league", label: "League Matchday 13" },
-  { week: 20, type: "league", label: "League Matchday 14" },
-  {
-    week: 21,
-    type: "tournament",
-    label: "Prestige Champions Cup - Champions Grand Final",
-    stage: "F",
-  },
-  { week: 22, type: "league", label: "League Matchday 15" },
-  { week: 23, type: "league", label: "League Matchday 16" },
-  { week: 24, type: "league", label: "League Matchday 17" },
-  { week: 25, type: "league", label: "League Matchday 18" },
-  { week: 26, type: "league", label: "League Matchday 19" },
-];
 
-export function getTeamGroup(clubId: string, allClubs: Club[]): string {
-  const idx = allClubs.findIndex((c) => c.id === clubId);
-  if (idx === -1 || idx >= 32) return "None";
-  const groupChar = String.fromCharCode(65 + Math.floor(idx / 4)); // Groups A-H
-  return `Group ${groupChar}`;
-}
-
-export function generateWeather(): WeatherCondition {
-  const roll = Math.random() * 100;
-  if (roll < 40) return 'Clear Skies';
-  if (roll < 60) return 'Light Rain';
-  if (roll < 72) return 'Heavy Rain';
-  if (roll < 82) return 'Strong Wind';
-  if (roll < 90) return 'Extreme Heat';
-  if (roll < 94) return 'Snow';
-  if (roll < 97) return 'Night Game';
-  if (roll < 99) return 'Fog';
-  return 'Thunderstorm';
-}
-
-export function generateTournamentGroupFixtures(allClubs: Club[]): Fixture[] {
-  const fixtures: Fixture[] = [];
-  let counter = 1;
-  for (let g = 0; g < 8; g++) {
-    const groupTeams = allClubs.slice(g * 4, g * 4 + 4);
-    if (groupTeams.length < 4) continue;
-    const [t0, t1, t2, t3] = groupTeams;
-
-    // Week 3
-    fixtures.push({
-      id: `cup-g1-${counter++}`,
-      week: 3,
-      homeClubId: t0.id,
-      awayClubId: t1.id,
-      isCompleted: false,
-      weather: generateWeather(),
-    });
-    fixtures.push({
-      id: `cup-g1-${counter++}`,
-      week: 3,
-      homeClubId: t2.id,
-      awayClubId: t3.id,
-      isCompleted: false,
-      weather: generateWeather(),
-    });
-
-    // Week 6
-    fixtures.push({
-      id: `cup-g2-${counter++}`,
-      week: 6,
-      homeClubId: t0.id,
-      awayClubId: t2.id,
-      isCompleted: false,
-      weather: generateWeather(),
-    });
-    fixtures.push({
-      id: `cup-g2-${counter++}`,
-      week: 6,
-      homeClubId: t1.id,
-      awayClubId: t3.id,
-      isCompleted: false,
-      weather: generateWeather(),
-    });
-
-    // Week 9
-    fixtures.push({
-      id: `cup-g3-${counter++}`,
-      week: 9,
-      homeClubId: t0.id,
-      awayClubId: t3.id,
-      isCompleted: false,
-      weather: generateWeather(),
-    });
-    fixtures.push({
-      id: `cup-g3-${counter++}`,
-      week: 9,
-      homeClubId: t1.id,
-      awayClubId: t2.id,
-      isCompleted: false,
-      weather: generateWeather(),
-    });
-  }
-  return fixtures;
-}
-
-export function generateCupBracket16FromGroups(
-  qualifiers: string[],
-): BracketNode[] {
-  const list: BracketNode[] = [];
-  // R16 (8 matches)
-  for (let i = 1; i <= 8; i++) {
-    list.push({
-      id: `R16-${i}`,
-      round: "R16",
-      roundIndex: i - 1,
-      homeClubId: qualifiers[2 * i - 2] || undefined,
-      awayClubId: qualifiers[2 * i - 1] || undefined,
-      isCompleted: false,
-    });
-  }
-  // QF (4 matches)
-  for (let i = 1; i <= 4; i++) {
-    list.push({
-      id: `QF-${i}`,
-      round: "QF",
-      roundIndex: i - 1,
-      isCompleted: false,
-    });
-  }
-  // SF (2 matches)
-  for (let i = 1; i <= 2; i++) {
-    list.push({
-      id: `SF-${i}`,
-      round: "SF",
-      roundIndex: i - 1,
-      isCompleted: false,
-    });
-  }
-  // Final (1 match)
-  list.push({ id: `F-1`, round: "F", roundIndex: 0, isCompleted: false });
-  return list;
-}
-
-export function getGroupStandingsForGroup(
-  groupIndex: number,
-  allClubs: Club[],
-  tournamentFixtures: Fixture[],
-) {
-  const groupTeams = allClubs.slice(groupIndex * 4, groupIndex * 4 + 4);
-  const standings = groupTeams.map((club) => {
-    let played = 0;
-    let won = 0;
-    let drawn = 0;
-    let lost = 0;
-    let goalsFor = 0;
-    let goalsAgainst = 0;
-    let points = 0;
-
-    tournamentFixtures.forEach((f) => {
-      if (!f.isCompleted) return;
-      if (f.homeClubId === club.id) {
-        played++;
-        goalsFor += f.homeScore || 0;
-        goalsAgainst += f.awayScore || 0;
-        if ((f.homeScore || 0) > (f.awayScore || 0)) {
-          won++;
-          points += 3;
-        } else if ((f.homeScore || 0) < (f.awayScore || 0)) {
-          lost++;
-        } else {
-          drawn++;
-          points += 1;
-        }
-      } else if (f.awayClubId === club.id) {
-        played++;
-        goalsFor += f.awayScore || 0;
-        goalsAgainst += f.homeScore || 0;
-        if ((f.awayScore || 0) > (f.homeScore || 0)) {
-          won++;
-          points += 3;
-        } else if ((f.awayScore || 0) < (f.homeScore || 0)) {
-          lost++;
-        } else {
-          drawn++;
-          points += 1;
-        }
-      }
-    });
-
-    return {
-      club,
-      played,
-      won,
-      drawn,
-      lost,
-      goalsFor,
-      goalsAgainst,
-      goalDifference: goalsFor - goalsAgainst,
-      points,
-    };
-  });
-
-  return standings.sort((a, b) => {
-    if (b.points !== a.points) return b.points - a.points;
-    if (b.goalDifference !== a.goalDifference)
-      return b.goalDifference - a.goalDifference;
-    return b.goalsFor - a.goalsFor;
-  });
-}
+import {
+  getTeamGroup,
+  generateWeather,
+  generateTournamentGroupFixtures,
+  generateCupBracket16FromGroups,
+  getGroupStandingsForGroup,
+} from './data/tournamentUtils';
 
 export default function App() {
   // Synchronous loading helper on initial mount to prevent empty state render crash
@@ -502,6 +294,8 @@ export default function App() {
     | "TROPHIES"
     | "LEADERS"
     | "NEWS"
+    | "BOARD"
+    | "FINANCES"
   >("MANAGER");
   const [fixturesActiveSubTab, setFixturesActiveSubTab] = useState<
     "LEAGUE" | "TOURNAMENT"
@@ -556,6 +350,17 @@ export default function App() {
   // v2: Media pressure (consecutive losses)
   const [consecutiveLosses, setConsecutiveLosses] = useState<number>(0);
   const [showPressureModal, setShowPressureModal] = useState<boolean>(false);
+
+  // ── Feature: Transfer Market Window ────────────────────────────────────────
+  const [transferMarketState, setTransferMarketState] = useState<TransferMarketState>(EMPTY_TRANSFER_STATE);
+
+  // ── Feature: Board Objectives ───────────────────────────────────────────────
+  const [boardState, setBoardState] = useState<BoardState>(INITIAL_BOARD_STATE);
+
+  // ── Feature: Financial Ledger ───────────────────────────────────────────────
+  const [financialLedger, setFinancialLedger] = useState<FinancialEntry[]>([]);
+  const addFinancialEntry = (entry: FinancialEntry) =>
+    setFinancialLedger(prev => [...prev, entry]);
 
   const simRef = useRef<any>(null);
 
@@ -737,6 +542,15 @@ export default function App() {
     setSimMessage(`Career initialized! Welcome Coach ${newSlot.managerName}!`);
     setTimeout(() => setSimMessage(""), 4000);
     setCurrentTabProgress("MANAGER");
+
+    // ── Generate board objectives for the new career ─────────────────────────
+    const userClubForObjectives = clubsSeeded.find(c => c.id === newSelectedClubId) ?? clubsSeeded[0];
+    const objectives = generateSeasonObjectives(userClubForObjectives, clubsSeeded.length, 1);
+    setBoardState({ confidence: 50, objectives, season: 1 });
+
+    // ── Reset financial ledger ───────────────────────────────────────────────
+    setFinancialLedger([]);
+    setTransferMarketState(EMPTY_TRANSFER_STATE);
   };
 
   // Delete a Save slot
@@ -1255,12 +1069,20 @@ export default function App() {
           return { ...c, cardioFacilities: c.cardioFacilities + 1 };
         } else if (facilityType === "medical") {
           return { ...c, medicalFacilities: (c.medicalFacilities || 1) + 1 };
+        } else if (facilityType === "accommodation") {
+          return { ...c, accommodationFacilities: (c.accommodationFacilities || 1) + 1 };
         }
       }
       return c;
     });
 
     setAllClubs(updated);
+    // Track facility cost in financial ledger
+    addFinancialEntry(buildFacilityEntry(
+      facilityType.charAt(0).toUpperCase() + facilityType.slice(1),
+      cost,
+      currentWeek,
+    ));
     saveCurrentSlotProgress(
       updated,
       undefined,
@@ -1290,6 +1112,13 @@ export default function App() {
     });
 
     setAllClubs(updated);
+    // Track in financial ledger
+    addFinancialEntry(buildTransferOutEntry(newPlayer.name, cost, currentWeek));
+    // Track in transfer history
+    setTransferMarketState(prev => ({
+      ...prev,
+      history: [...prev.history, makeHistoryEntry({ type: 'bought', playerName: newPlayer.name, amount: cost, clubName: 'Transfer Market', week: currentWeek })],
+    }));
     saveCurrentSlotProgress(
       updated,
       undefined,
@@ -1482,6 +1311,7 @@ export default function App() {
     const nextBalance = userBalance + value;
     setUserBalance(nextBalance);
 
+    const soldPlayer = allClubs.find(c => c.id === userClubId)?.squad.find(p => p.id === playerId);
     const updated = allClubs.map((club) => {
       if (club.id === userClubId) {
         return {
@@ -1493,6 +1323,14 @@ export default function App() {
     });
 
     setAllClubs(updated);
+    // Track in financial ledger
+    if (soldPlayer) {
+      addFinancialEntry(buildTransferInEntry(soldPlayer.name, value, currentWeek));
+      setTransferMarketState(prev => ({
+        ...prev,
+        history: [...prev.history, makeHistoryEntry({ type: 'sold', playerName: soldPlayer.name, amount: value, clubName: 'Transfer Market', week: currentWeek })],
+      }));
+    }
     saveCurrentSlotProgress(
       updated,
       undefined,
@@ -2074,6 +1912,39 @@ export default function App() {
     const nextWeek = currentWeek + 1;
     let nextNews = [...newNewsItems, ...newsFeed].slice(0, 30); // Keep max 30 news
     setNewsFeed(nextNews);
+
+    // ── Weekly financial entries ─────────────────────────────────────────────
+    const userClubForFinance = updatedClubs.find(c => c.id === userClubId);
+    if (userClubForFinance) {
+      addFinancialEntry(buildWeeklyWageEntry(userClubForFinance, currentWeek));
+    }
+
+    // ── Purge stale bids when window closes ──────────────────────────────────
+    setTransferMarketState(prev => purgeStaleBids(prev, nextWeek));
+
+    // ── Generate incoming bids if window is opening ──────────────────────────
+    const currentPhase = getTransferWindowPhase(currentWeek);
+    const nextPhase    = getTransferWindowPhase(nextWeek);
+    if (currentPhase === 'closed' && nextPhase !== 'closed' && userClubForFinance) {
+      const newBids = generateIncomingBids(userClubForFinance, updatedClubs, nextWeek);
+      if (newBids.length > 0) {
+        setTransferMarketState(prev => ({ ...prev, incomingBids: [...prev.incomingBids, ...newBids] }));
+        addNotification({ type: 'transfer', title: 'Transfer Window Open', body: `${newBids.length} club(s) have made offers for your players` });
+      }
+    }
+
+    // ── Refresh board objective progress ─────────────────────────────────────
+    setBoardState(prev => ({
+      ...prev,
+      objectives: refreshObjectiveProgress(
+        prev.objectives,
+        userClubForFinance ?? updatedClubs[0],
+        updatedClubs,
+        updatedCupRound,
+        nextWeek,
+      ),
+    }));
+
     if (nextWeek > 26) {
       setIsSeasonReviewOpen(true);
       setSimMessage(
@@ -2951,174 +2822,21 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#090b0f] text-slate-200 font-sans overflow-hidden select-none text-left">
-      {/* 1. LEFT SIDEBAR: PREMIUM OPERATIONS NAVIGATION — hidden on mobile */}
-      <nav
-        id="sidebar-rail"
-        className="hidden lg:flex w-20 xl:w-24 flex-col items-center py-6 border-r border-white/10 bg-[#0c0f16] justify-between z-10 shrink-0"
-      >
-        <div className="flex flex-col items-center gap-8 w-full">
-          {/* LOGO */}
-          <div
-            onClick={() => setActiveSlotId(null)}
-            className="w-12 h-12 bg-gradient-to-tr from-sky-400 to-emerald-400 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.2)] cursor-pointer"
-            title="Return to Career Selection Grid"
-          >
-            <Trophy className="text-black font-black w-6 h-6 shrink-0" />
-          </div>
-
-          {/* SIDER BAR LIST */}
-          <div className="flex flex-col gap-3 w-full px-2">
-            {[
-              {
-                id: "MANAGER" as const,
-                label: "Manager Suite",
-                icon: Briefcase,
-              },
-              {
-                id: "NEXT_MATCH" as const,
-                label: "Next Match",
-                icon: Zap,
-                notify: activeSimulation ? "LIVE" : undefined,
-              },
-              { id: "FIXTURES" as const, label: "Fixtures", icon: Calendar },
-              { id: "STANDINGS" as const, label: "Standings", icon: Award },
-              {
-                id: "ANALYTICS" as const,
-                label: "League Leaders",
-                icon: BarChart3,
-              },
-              { id: "NEWS" as const, label: "Media Feed", icon: Globe },
-              { id: "ALL_TEAMS" as const, label: "All Teams", icon: Globe },
-              {
-                id: "TROPHIES" as const,
-                label: "Cabinet/Trophies",
-                icon: Trophy,
-              },
-            ].map((item) => {
-              const Icon = item.icon;
-              const isSelected = currentTabProgress === item.id;
-              return (
-                <button
-                  key={item.id}
-                  id={`nav-tab-${item.id}`}
-                  onClick={() => setCurrentTabProgress(item.id)}
-                  className={`flex flex-col items-center py-2.5 rounded-xl transition-all relative cursor-pointer w-full group ${
-                    isSelected
-                      ? "bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black font-mono"
-                      : "text-slate-400 hover:text-white hover:bg-white/5"
-                  }`}
-                >
-                  <Icon className="w-4.5 h-4.5 shrink-0" />
-                  <span className="text-[8px] mt-1 font-bold uppercase tracking-widest text-center hidden md:block scale-90">
-                    {item.label.split(" ")[0]}
-                  </span>
-
-                  {item.notify && (
-                    <span className="absolute top-1 right-2 w-5 text-center bg-red-500 text-black font-mono font-black text-[7px] py-[2px] rounded-full animate-pulse uppercase">
-                      {item.notify}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* LOG OUT SAVE SLOT */}
-        <div className="space-y-4">
-          <button
-            onClick={() => setActiveSlotId(null)}
-            className="px-2 py-1.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-all border border-white/5 cursor-pointer text-[9px] uppercase font-bold text-center font-mono"
-            title="Log Out to save Slot career profile"
-          >
-            SAVES
-          </button>
-        </div>
-      </nav>
-
-      {/* 2. RIGHT CONTAINER */}
+      <AppNav
+        currentTab={currentTabProgress as any}
+        onTabChange={(tab) => setCurrentTabProgress(tab as any)}
+        onLogOut={() => setActiveSlotId(null)}
+        activeSimulation={activeSimulation}
+      />
       <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* HEADER TOP DISPLAY */}
-        <header className="h-14 md:h-20 flex items-center justify-between px-3 md:px-6 bg-[#0c0f16] border-b border-white/5 shrink-0 gap-2">
-          <div className="flex items-center gap-4">
-            <div className="flex flex-col">
-              <h1 className="text-sm md:text-xl font-black tracking-tight text-white uppercase flex items-center gap-1">
-                SportSim{" "}
-                <span className="text-sky-400 text-opacity-100 font-extrabold italic bg-sky-500/5 px-2 py-0.5 rounded border border-sky-400/10">
-                  Pro
-                </span>
-              </h1>
-              <div className="hidden sm:flex text-[9px] text-slate-400 uppercase font-mono tracking-wider mt-0.5 items-center gap-1">
-                <span>First Team Operations Manager Console</span>
-                <span className="text-slate-600">•</span>
-                <span className="text-emerald-400 font-extrabold bg-emerald-500/10 border border-emerald-500/20 px-1 py-0.2 rounded uppercase">
-                  Dual Season Active
-                </span>
-              </div>
-            </div>
-
-            {/* Campaign Schedule Overview — hidden on mobile */}
-            <div className="hidden md:flex bg-slate-900 border border-white/5 p-2 rounded-xl items-center gap-2 ml-4 text-xs">
-              <span className="text-[9px] text-slate-500 font-mono uppercase tracking-wider">
-                Wk {currentWeek}/26
-              </span>
-              <span className="text-slate-700">|</span>
-              <span className="text-[10px] text-[#facc15] font-bold uppercase truncate max-w-[140px]">
-                {DUAL_SCHEDULE[currentWeek - 1]?.label || `Matchday ${currentWeek}`}
-              </span>
-            </div>
-          </div>
-
-          {/* RIGHT BALANCE DISPLAY HUD AND USER CREST */}
-          <div className="flex items-center gap-3 sm:gap-6">
-            {/* Mobile compact balance — xs only */}
-            <div className="flex sm:hidden items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg">
-              <span className="text-emerald-400 font-mono font-black text-xs">${userBalance.toLocaleString()}</span>
-            </div>
-            <div className="hidden sm:flex flex-col items-end">
-              <span className="text-[9px] uppercase text-slate-500 font-bold tracking-widest mb-0.5 flex items-center gap-1">
-                <Wallet className="w-3 h-3 text-emerald-400" />
-                Budget
-              </span>
-              <span className="text-emerald-400 font-mono font-black text-xl leading-none">
-                ${userBalance.toLocaleString()}
-              </span>
-            </div>
-
-            {/* Notification Bell */}
-            <button
-              onClick={() => setIsNotificationDrawerOpen(true)}
-              className="relative w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center transition-all cursor-pointer"
-            >
-              <Bell className="w-4 h-4 text-slate-400" />
-              {notifications.filter(n => !n.read).length > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-sky-500 text-black font-black text-[8px] flex items-center justify-center">
-                  {notifications.filter(n => !n.read).length}
-                </span>
-              )}
-            </button>
-
-            <div className="flex items-center gap-2.5">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs uppercase shadow-inner border border-white/15"
-                style={{
-                  backgroundColor: `${currentActiveUserClub.color}25`,
-                  color: currentActiveUserClub.color,
-                }}
-              >
-                {currentActiveUserClub.name.substring(0, 2)}
-              </div>
-              <div className="text-left hidden md:block">
-                <span className="text-white text-xs font-black block">
-                  {managerName}
-                </span>
-                <span className="text-[9px] text-[#94a3b8] block uppercase font-mono tracking-wider">
-                  {currentActiveUserClub.name}
-                </span>
-              </div>
-            </div>
-          </div>
-        </header>
+        <AppHeader
+          managerName={managerName}
+          currentWeek={currentWeek}
+          userBalance={userBalance}
+          userClub={currentActiveUserClub}
+          notifications={notifications}
+          onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
+        />
 
         {/* STATUS BANNER */}
         {simMessage && (
@@ -3163,6 +2881,10 @@ export default function App() {
                   });
                 }
               }}
+              transferMarketState={transferMarketState}
+              boardState={boardState}
+              onUpdateTransferMarketState={setTransferMarketState}
+              onAddNotification={(title, body) => addNotification({ type: 'transfer', title, body })}
             />
           )}
 
@@ -3192,430 +2914,37 @@ export default function App() {
           )}
 
           {currentTabProgress === "FIXTURES" && (
-            <div>
-              {activeSimulation ? (
-                <div className="space-y-4">
-                  {/* Skip Header Banner */}
-                  <div className="bg-[#121620] border border-white/10 p-3.5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 text-xs leading-none">
-                    <span className="text-slate-400 font-bold uppercase tracking-wider block">
-                      ⚡ Want to instantly simulated results? Complete this game
-                      with a single tab:
-                    </span>
-                    <button
-                      onClick={handleSkipOrQuickSim}
-                      className="px-4 py-2 bg-rose-500 hover:bg-rose-400 text-black font-extrabold uppercase rounded-lg cursor-pointer text-[10px] tracking-wider transition-all"
-                    >
-                      Instant Simulated Match Result
-                    </button>
-                  </div>
-
-                  <MatchCenter
-                    simulation={activeSimulation}
-                    homeClub={
-                      allClubs.find(
-                        (c) => c.id === activeSimulation.homeClubId,
-                      )!
-                    }
-                    awayClub={
-                      allClubs.find(
-                        (c) => c.id === activeSimulation.awayClubId,
-                      )!
-                    }
-                    isPlaying={isPlaying}
-                    simSpeed={simSpeed}
-                    onTogglePlay={() => setIsPlaying(!isPlaying)}
-                    onStepSimulation={handleProgressSimOneTick}
-                    onSetSpeed={setSimSpeed}
-                    onChangeUserMentality={handleTacticalShift}
-                    onChangeUserPlaystyle={handlePlaystyleShift}
-                    onChangeUserFormation={handleFormationShift}
-                    userClubId={userClubId}
-                    onTapPlayer={handleOpenPlayerDossier}
-                    onTapClub={handleOpenClubDossier}
-                    onAdjustSquadLineup={handleAdjustSquadLineup}
-                    onCloseMatch={() => setActiveSimulation(null)}
-                  />
-                </div>
-              ) : (
-                <div className="max-w-4xl mx-auto bg-[#121620] border border-white/10 rounded-2xl p-6 space-y-6">
-                  <div className="flex justify-between items-center pb-4 border-b border-white/5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-sky-500/10 rounded-xl flex items-center justify-center text-sky-400 border border-sky-500/20 shadow">
-                        <Tv className="w-6 h-6 animate-pulse" />
-                      </div>
-                      <div>
-                        <h2 className="text-md font-black text-white uppercase tracking-tight">
-                          Campaign Fixtures & Broadcast deck
-                        </h2>
-                        <p className="text-xs text-slate-400">
-                          Launch real-time interactive match servers. Manage
-                          user matchday lineups, or spectate any CPU fixture
-                          live!
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 border border-white/5 px-3 py-1.5 rounded-xl font-mono text-center shrink-0">
-                      <span className="text-[9px] uppercase text-slate-500 block leading-none font-bold">
-                        CURRENT CAMPAIGN ROUND
-                      </span>
-                      <span className="text-xs font-black text-sky-400 uppercase mt-1 block">
-                        WEEK {currentWeek} / 26
-                      </span>
-                    </div>
-                  </div>
-
-                  {campaignType === "dual" && (
-                    <div className="flex gap-2 p-1 bg-slate-950/80 border border-white/5 rounded-xl w-fit">
-                      <button
-                        onClick={() => setFixturesActiveSubTab("LEAGUE")}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
-                          fixturesActiveSubTab === "LEAGUE"
-                            ? "bg-sky-500 text-black shadow font-extrabold"
-                            : "text-slate-400 hover:text-white hover:bg-white/5"
-                        }`}
-                      >
-                        League Matchdays
-                      </button>
-                      <button
-                        onClick={() => setFixturesActiveSubTab("TOURNAMENT")}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
-                          fixturesActiveSubTab === "TOURNAMENT"
-                            ? "bg-amber-500 text-black shadow font-extrabold"
-                            : "text-slate-400 hover:text-white hover:bg-white/5"
-                        }`}
-                      >
-                        Prestige Cup
-                      </button>
-                    </div>
-                  )}
-
-                  {activeMatchesToPlay.length === 0 ? (
-                    <div className="p-8 text-center space-y-4">
-                      <div className="py-5 bg-black/40 border border-emerald-500/20 text-emerald-400 rounded-xl text-xs font-black uppercase flex flex-col items-center justify-center gap-2">
-                        <CheckCircle2 className="w-8 h-8 text-emerald-400 animate-bounce mb-1" />
-                        <span>
-                          All fixtures completed for this session round!
-                        </span>
-                      </div>
-
-                      <button
-                        onClick={handleAdvanceCampaignWeek}
-                        className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all shadow"
-                      >
-                        Advance to Week {currentWeek + 1}
-                      </button>
-                    </div>
-                  ) : campaignType === "dual" &&
-                    fixturesActiveSubTab === "LEAGUE" &&
-                    !(
-                      DUAL_SCHEDULE.find((s) => s.week === currentWeek)
-                        ?.type === "league"
-                    ) ? (
-                    (() => {
-                      let nextLgMatch = leagueFixtures?.find(
-                        (f) =>
-                          !f.isCompleted &&
-                          (f.homeClubId === currentActiveUserClub?.id ||
-                            f.awayClubId === currentActiveUserClub?.id),
-                      );
-                      let nextLgOpponentName = "";
-                      let nextLgWeek = "";
-                      if (nextLgMatch) {
-                        const oppId =
-                          nextLgMatch.homeClubId === currentActiveUserClub?.id
-                            ? nextLgMatch.awayClubId
-                            : nextLgMatch.homeClubId;
-                        const opp = allClubs.find((c) => c.id === oppId);
-                        nextLgOpponentName = opp?.name || "Unknown";
-                        nextLgWeek = `Week ${nextLgMatch.week}`;
-                      }
-                      return (
-                        <div className="bg-[#121620] border border-white/5 rounded-2xl p-8 text-center max-w-lg mx-auto space-y-4">
-                          <div className="w-12 h-12 bg-sky-500/10 text-sky-400 rounded-xl flex items-center justify-center mx-auto border border-sky-400/20">
-                            <Calendar className="w-6 h-6" />
-                          </div>
-                          <div className="space-y-1.5">
-                            <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                              No League Fixtures Scheduled
-                            </h3>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                              Week {currentWeek} is designated for the{" "}
-                              <strong>Prestige Champions Cup</strong> tournament
-                              stage.
-                            </p>
-
-                            {nextLgMatch ? (
-                              <div className="my-4 bg-sky-500/10 border border-sky-500/20 p-4 rounded-xl text-left inline-block min-w-48">
-                                <span className="text-[10px] text-sky-400 font-mono uppercase font-black block mb-1 tracking-widest">
-                                  Next League Match:
-                                </span>
-                                <div className="text-white text-sm font-black uppercase tracking-tight">
-                                  vs {nextLgOpponentName}
-                                </div>
-                                <div className="text-xs text-slate-400 mt-1">
-                                  Scheduled for{" "}
-                                  <strong className="text-white">
-                                    {nextLgWeek}
-                                  </strong>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="my-4 text-xs text-slate-500 bg-white/5 p-3 rounded-xl border border-white/10 uppercase tracking-widest font-mono font-bold">
-                                No Upcoming League Matches
-                              </div>
-                            )}
-
-                            <p className="text-xs text-slate-400 mt-4 block">
-                              Select the{" "}
-                              <strong className="text-amber-400">
-                                Prestige Cup
-                              </strong>{" "}
-                              sub-tab above to play tournament fixtures of the
-                              week!
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })()
-                  ) : campaignType === "dual" &&
-                    fixturesActiveSubTab === "TOURNAMENT" &&
-                    DUAL_SCHEDULE.find((s) => s.week === currentWeek)?.type ===
-                      "league" ? (
-                    (() => {
-                      let nextCupMatch = tournamentFixtures?.find(
-                        (f) =>
-                          !f.isCompleted &&
-                          (f.homeClubId === currentActiveUserClub?.id ||
-                            f.awayClubId === currentActiveUserClub?.id),
-                      );
-                      let nextKnockoutMatch = cupBracket?.find(
-                        (n) =>
-                          !n.isCompleted &&
-                          (n.homeClubId === currentActiveUserClub?.id ||
-                            n.awayClubId === currentActiveUserClub?.id),
-                      );
-                      let combinedNext = nextCupMatch || nextKnockoutMatch;
-
-                      let nextCupOpponentName = "";
-                      let nextCupWeek = "";
-                      if (combinedNext) {
-                        const oppId =
-                          combinedNext.homeClubId === currentActiveUserClub?.id
-                            ? combinedNext.awayClubId
-                            : combinedNext.homeClubId;
-                        const opp = allClubs.find((c) => c.id === oppId);
-                        nextCupOpponentName =
-                          opp?.name || "TBD (Awaiting Draw)";
-
-                        if ("week" in combinedNext) {
-                          nextCupWeek = `Week ${(combinedNext as Fixture).week}`;
-                        } else {
-                          const schedInfo = DUAL_SCHEDULE.find(
-                            (s) =>
-                              s.stage === (combinedNext as BracketNode).round,
-                          );
-                          nextCupWeek = schedInfo
-                            ? `Week ${schedInfo.week}`
-                            : "TBD";
-                        }
-                      }
-
-                      return (
-                        <div className="bg-[#121620] border border-white/5 rounded-2xl p-8 text-center max-w-lg mx-auto space-y-4">
-                          <div className="w-12 h-12 bg-amber-500/10 text-amber-400 rounded-xl flex items-center justify-center mx-auto border border-amber-400/20">
-                            <Award className="w-6 h-6 animate-pulse" />
-                          </div>
-                          <div className="space-y-1.5">
-                            <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                              No Prestige Cup Fixtures Scheduled
-                            </h3>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                              Week {currentWeek} is designated for local{" "}
-                              <strong>Elite SuperLeague</strong> league matches.
-                            </p>
-
-                            {combinedNext ? (
-                              <div className="my-4 bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-left inline-block min-w-48">
-                                <span className="text-[10px] text-amber-500 font-mono uppercase font-black block mb-1 tracking-widest">
-                                  Next Cup Match:
-                                </span>
-                                <div className="text-white text-sm font-black uppercase tracking-tight">
-                                  vs {nextCupOpponentName}
-                                </div>
-                                <div className="text-xs text-slate-400 mt-1">
-                                  Scheduled for{" "}
-                                  <strong className="text-white">
-                                    {nextCupWeek}
-                                  </strong>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="my-4 text-xs text-slate-500 bg-white/5 p-3 rounded-xl border border-white/10 uppercase tracking-widest font-mono font-bold">
-                                No Upcoming Cup Matches Remaining or knocked out
-                              </div>
-                            )}
-
-                            <p className="text-xs text-slate-400 mt-4 block">
-                              Select the{" "}
-                              <strong className="text-sky-400">
-                                League Matchdays
-                              </strong>{" "}
-                              sub-tab above to play league fixtures of the week!
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })()
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-slate-900/[0.45] border border-white/5 p-4 rounded-2xl">
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono font-black block">
-                            Scheduled matches this week (
-                            {campaignType === "league" ||
-                            (campaignType === "dual" && currentWeek % 2 !== 0)
-                              ? "League Matchday"
-                              : "Prestige Champions Cup"}
-                            ):
-                          </span>
-                          <span className="text-[9px] text-[#22c55e] font-mono uppercase bg-[#22c55e]/10 px-2 py-0.5 rounded border border-[#22c55e]/20 inline-block font-bold">
-                            {activeMatchesToPlay.length} matches pending
-                          </span>
-                        </div>
-                        <button
-                          onClick={handleSimulateAllRemainingMatches}
-                          className="px-4 py-2 bg-sky-500 hover:bg-sky-450 disabled:opacity-50 text-black text-[10px] font-black uppercase tracking-wider rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
-                        >
-                          Simulate All matches
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {activeMatchesToPlay.map((match) => {
-                          const h = allClubs.find(
-                            (c) => c.id === match.homeClubId,
-                          )!;
-                          const a = allClubs.find(
-                            (c) => c.id === match.awayClubId,
-                          )!;
-                          const isUserGame =
-                            h.id === userClubId || a.id === userClubId;
-
-                          return (
-                            <div
-                              key={match.id}
-                              className={`p-4 rounded-2xl flex flex-col justify-between border transition-all relative overflow-hidden ${
-                                isUserGame
-                                  ? "bg-sky-500/[0.03] border-sky-400/30 shadow-[0_0_15px_rgba(56,189,248,0.02)]"
-                                  : "bg-white/5 border-white/5 hover:border-white/10"
-                              }`}
-                            >
-                              {/* Glowing tag for User match */}
-                              {isUserGame && (
-                                <span className="absolute top-2 right-2 bg-sky-500 text-black text-[7px] font-black font-mono tracking-widest px-1.5 py-0.5 rounded-full z-10">
-                                  YOUR GAME
-                                </span>
-                              )}
-
-                              {/* Teams matchup */}
-                              <div className="space-y-3 mb-4">
-                                <div className="flex justify-between items-center text-xs">
-                                  <div className="flex items-center gap-2 max-w-[170px]">
-                                    <div
-                                      className="w-2 h-2 rounded-full"
-                                      style={{ backgroundColor: h.color }}
-                                    ></div>
-                                    <span
-                                      onClick={() =>
-                                        handleOpenClubDossier(h.id)
-                                      }
-                                      className={`font-black truncate cursor-pointer hover:underline hover:text-sky-450 ${h.id === userClubId ? "text-sky-400" : "text-slate-200"}`}
-                                    >
-                                      {h.name}
-                                    </span>
-                                  </div>
-                                  <span className="text-slate-500 font-mono text-[10px]">
-                                    OVR{" "}
-                                    {Math.round(
-                                      h.squad.reduce(
-                                        (s, p) => s + p.rating,
-                                        0,
-                                      ) / h.squad.length,
-                                    )}
-                                  </span>
-                                </div>
-
-                                <div className="flex justify-between items-center text-xs">
-                                  <div className="flex items-center gap-2 max-w-[170px]">
-                                    <div
-                                      className="w-2 h-2 rounded-full"
-                                      style={{ backgroundColor: a.color }}
-                                    ></div>
-                                    <span
-                                      onClick={() =>
-                                        handleOpenClubDossier(a.id)
-                                      }
-                                      className={`font-black truncate cursor-pointer hover:underline hover:text-sky-450 ${a.id === userClubId ? "text-sky-400" : "text-slate-200"}`}
-                                    >
-                                      {a.name}
-                                    </span>
-                                  </div>
-                                  <span className="text-slate-500 font-mono text-[10px]">
-                                    OVR{" "}
-                                    {Math.round(
-                                      a.squad.reduce(
-                                        (s, p) => s + p.rating,
-                                        0,
-                                      ) / a.squad.length,
-                                    )}
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Trigger button */}
-                              {isUserGame ? (
-                                <button
-                                  id={`coach-your-club-${match.id}`}
-                                  onClick={() =>
-                                    handleInitiateLiveSimulation(
-                                      match.id,
-                                      h.id,
-                                      a.id,
-                                      false,
-                                    )
-                                  }
-                                  className="w-full py-2.5 bg-sky-500 hover:bg-sky-400 text-black text-[10px] tracking-wider uppercase font-black rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition-all"
-                                >
-                                  <Play className="w-3.5 h-3.5 fill-black" />
-                                  COACH YOUR CLUB
-                                </button>
-                              ) : (
-                                <button
-                                  id={`spectate-cpu-${match.id}`}
-                                  onClick={() =>
-                                    handleInitiateLiveSimulation(
-                                      match.id,
-                                      h.id,
-                                      a.id,
-                                      true,
-                                    )
-                                  }
-                                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 text-[10px] tracking-wider uppercase font-extrabold rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition-all"
-                                >
-                                  <Play className="w-3.5 h-3.5 text-slate-400" />
-                                  Spectate Live Broadcast
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <FixturesPage
+              activeSimulation={activeSimulation}
+              allClubs={allClubs}
+              userClubId={userClubId}
+              currentWeek={currentWeek}
+              campaignType={campaignType}
+              fixturesActiveSubTab={fixturesActiveSubTab}
+              onSetFixturesTab={setFixturesActiveSubTab}
+              leagueFixtures={leagueFixtures}
+              tournamentFixtures={tournamentFixtures || []}
+              cupBracket={cupBracket}
+              currentCupRound={currentCupRound}
+              currentActiveUserClub={currentActiveUserClub}
+              activeMatchesToPlay={activeMatchesToPlay}
+              isPlaying={isPlaying}
+              simSpeed={simSpeed}
+              onSkipOrQuickSim={handleSkipOrQuickSim}
+              onAdvanceCampaignWeek={handleAdvanceCampaignWeek}
+              onSimulateAllRemainingMatches={handleSimulateAllRemainingMatches}
+              onInitiateLiveSimulation={handleInitiateLiveSimulation}
+              onProgressSimOneTick={handleProgressSimOneTick}
+              onTogglePlay={() => setIsPlaying(!isPlaying)}
+              onSetSpeed={setSimSpeed}
+              onTacticalShift={handleTacticalShift}
+              onPlaystyleShift={handlePlaystyleShift}
+              onFormationShift={handleFormationShift}
+              onOpenPlayerDossier={handleOpenPlayerDossier}
+              onOpenClubDossier={handleOpenClubDossier}
+              onAdjustSquadLineup={handleAdjustSquadLineup}
+              onCloseMatch={() => setActiveSimulation(null)}
+            />
           )}
 
           {currentTabProgress === "STANDINGS" && (
@@ -3648,48 +2977,7 @@ export default function App() {
           )}
 
           {currentTabProgress === "NEWS" && (
-            <div className="animate-fadeIn space-y-6">
-              <div className="bg-[#121620] border border-white/10 rounded-2xl p-6">
-                <h2 className="text-xl font-black text-white uppercase tracking-tight mb-4 flex items-center gap-2">
-                  <Globe className="w-6 h-6 text-sky-400" />
-                  Global Sports Media Feed
-                </h2>
-                {newsFeed.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">
-                    No news generated yet. Play some matches!
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {newsFeed.map((news) => (
-                      <div
-                        key={news.id}
-                        className="bg-slate-900/50 border border-white/5 p-4 rounded-xl flex gap-3 items-start relative overflow-hidden"
-                      >
-                        <div
-                          className={`w-1 h-full absolute left-0 top-0 ${
-                            news.type === "match"
-                              ? "bg-sky-500"
-                              : news.type === "transfer"
-                                ? "bg-amber-500"
-                                : news.type === "injury"
-                                  ? "bg-red-500"
-                                  : "bg-emerald-500"
-                          }`}
-                        />
-                        <div className="flex-1 pl-2">
-                          <div className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest mb-1">
-                            Week {news.week} • {news.type}
-                          </div>
-                          <div className="text-sm font-bold text-slate-200">
-                            {news.headline}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            <NewsPage newsFeed={newsFeed} />
           )}
 
           {currentTabProgress === "ALL_TEAMS" && (
@@ -3705,10 +2993,35 @@ export default function App() {
           {currentTabProgress === "TROPHIES" && (
             <TrophiesCenter historyTrophies={historyTrophies} />
           )}
+
+          {currentTabProgress === "BOARD" && (
+            <div className="max-w-2xl mx-auto">
+              <div className="mb-4">
+                <h2 className="text-xl font-black text-white uppercase tracking-tight">Board Room</h2>
+                <p className="text-gray-400 text-xs mt-1">Season objectives and board confidence</p>
+              </div>
+              <BoardObjectives boardState={boardState} currentWeek={currentWeek} />
+            </div>
+          )}
+
+          {currentTabProgress === "FINANCES" && (
+            <div className="max-w-2xl mx-auto">
+              <div className="mb-4">
+                <h2 className="text-xl font-black text-white uppercase tracking-tight">Financial Centre</h2>
+                <p className="text-gray-400 text-xs mt-1">Revenue, expenses, and transfer balance</p>
+              </div>
+              <FinancialDashboard
+                ledger={financialLedger}
+                userClub={currentActiveUserClub}
+                userBalance={userBalance}
+                currentWeek={currentWeek}
+              />
+            </div>
+          )}
         </main>
       </div>
 
-      {/* 3. DOSSIER DIALOG PORTALS (UNIVERSAL LINK POPUP) */}
+      {/* DOSSIER & EVENT MODALS */}
       {pendingMoraleEvents.length > 0 && (
         <MoraleEventModal
           player={pendingMoraleEvents[0]}
@@ -3716,7 +3029,7 @@ export default function App() {
         />
       )}
 
-            {dossierPlayer && (
+      {dossierPlayer && (
         <PlayerDossierModal
           player={dossierPlayer}
           isOwnTeam={currentActiveUserClub?.squad.some(
@@ -3736,99 +3049,16 @@ export default function App() {
         />
       )}
 
-      {/* 4. HALFTIME COACHING BOARD MODAL */}
       {isHalftimeModalOpen && activeSimulation && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn text-left">
-          <div className="bg-[#121620] border border-white/10 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl relative">
-            <div className="p-5 border-b border-white/5 bg-gradient-to-r from-amber-500/10 to-transparent flex justify-between items-center">
-              <div>
-                <h2 className="text-md font-black text-white uppercase tracking-tight flex items-center gap-1.5">
-                  <ShieldAlert className="w-5 h-5 text-amber-500 animate-pulse animate-bounce" />
-                  HALFTIME TEAM TALK & SUBSTITUTIONS
-                </h2>
-                <p className="text-[9px] text-slate-450 font-mono uppercase mt-0.5">
-                  Tactical briefing panel index slot
-                </p>
-              </div>
-
-              <div className="bg-slate-900 border border-white/5 px-3 py-1.5 rounded-lg text-center font-mono text-xs">
-                <span>
-                  Score:{" "}
-                  <strong className="text-white font-black">
-                    {activeSimulation.homeScore} - {activeSimulation.awayScore}
-                  </strong>
-                </span>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4 max-h-[350px] overflow-y-auto">
-              <div className="space-y-3.5">
-                <span className="text-[10px] text-slate-500 uppercase tracking-widest block font-mono font-bold">
-                  Your Locker Room Strategy:
-                </span>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  The referee blown the whistles. Your starting players are
-                  currently fatigued from 45 minutes of heavy play. Pick
-                  tactical substitutes inside the Office tab after ending
-                  simulation, or utilize your head coach guidelines.
-                </p>
-              </div>
-
-              <div className="bg-[#1c2230] border border-white/5 p-4 rounded-xl space-y-3">
-                <span className="text-[10px] text-[#f59e0b] block uppercase tracking-wider font-extrabold flex items-center gap-1">
-                  <Activity className="w-4 h-4 text-amber-500" />
-                  Half-Time Quick Substitution Notice
-                </span>
-                <p className="text-[11.5px] text-slate-400 leading-normal">
-                  You can click on the buttons below to have the assistant coach
-                  dynamically rotate tired players automatically for the 2nd
-                  half, keeping your tactical advantage high.
-                </p>
-              </div>
-            </div>
-
-            <div className="p-5 bg-slate-900 border-t border-white/5 flex flex-col md:flex-row gap-3">
-              <button
-                onClick={() => {
-                  const h = allClubs.find(
-                    (c) => c.id === activeSimulation.homeClubId,
-                  )!;
-                  runAssistantSubstitution(h);
-                  setIsHalftimeModalOpen(false);
-                  setIsPlaying(true);
-                  setSimMessage(
-                    "Halftime substitutions deployed successfully! Commencing 2nd half.",
-                  );
-                  setTimeout(() => setSimMessage(""), 3000);
-                }}
-                className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
-              >
-                Let Assistant Deploy Subs & Play
-              </button>
-              <button
-                onClick={() => {
-                  setIsHalftimeModalOpen(false);
-                  setIsPlaying(true);
-                }}
-                className="flex-1 py-2.5 bg-slate-850 hover:bg-slate-800 text-white border border-white/10 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
-              >
-                Continue Play without Adjustments
-              </button>
-              <button
-                onClick={() => {
-                  setIsHalftimeModalOpen(false);
-                  setIsPlaying(false);
-                }}
-                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
-              >
-                Make Subs Myself (Live Tactics)
-              </button>
-            </div>
-          </div>
-        </div>
+        <HalftimeModal
+          activeSimulation={activeSimulation}
+          allClubs={allClubs}
+          onClose={() => setIsHalftimeModalOpen(false)}
+          onResume={() => { setIsHalftimeModalOpen(false); setIsPlaying(true); }}
+          onMessage={(msg) => { setSimMessage(msg); setTimeout(() => setSimMessage(""), 3000); }}
+        />
       )}
 
-      {/* 5. SEASON REVIEW AND CONTRACT PROLONGATION SCREEN */}
       {isSeasonReviewOpen && (
         <SeasonReviewModal
           userClub={currentActiveUserClub!}
@@ -3837,7 +3067,6 @@ export default function App() {
         />
       )}
 
-      {/* 6. POST-MATCH ANALYSIS MODAL */}
       {postMatchAnalysis && !isSeasonReviewOpen && (
         <PostMatchModal
           analysis={postMatchAnalysis}
@@ -3847,7 +3076,6 @@ export default function App() {
         />
       )}
 
-      {/* 7. NOTIFICATION DRAWER */}
       {isNotificationDrawerOpen && (
         <NotificationDrawer
           notifications={notifications}
@@ -3857,50 +3085,17 @@ export default function App() {
         />
       )}
 
-      {/* 8. MEDIA PRESSURE MODAL */}
       {showPressureModal && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#121620] border border-rose-500/30 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl p-6 space-y-4">
-            <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto">
-              <AlertCircle className="w-7 h-7 text-rose-400" />
-            </div>
-            <h2 className="text-center text-lg font-black text-white uppercase tracking-tight">Board Warning</h2>
-            <p className="text-xs text-slate-400 text-center leading-relaxed">
-              The board is concerned about your recent form. {consecutiveLosses} consecutive defeats is unacceptable. Results must improve immediately or consequences will follow.
-            </p>
-            <button
-              onClick={() => setShowPressureModal(false)}
-              className="w-full py-3 bg-rose-500 hover:bg-rose-400 text-black font-black uppercase text-xs tracking-wider rounded-xl transition-all cursor-pointer"
-            >
-              Understood — I'll Turn This Around
-            </button>
-          </div>
-        </div>
+        <PressureModal
+          consecutiveLosses={consecutiveLosses}
+          onClose={() => setShowPressureModal(false)}
+        />
       )}
 
-            {/* MOBILE BOTTOM NAV — visible only on small screens */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0a0c12]/95 backdrop-blur-md border-t border-white/10 flex items-center justify-around px-1 pb-safe">
-        {[
-          { id: "NEXT_MATCH", icon: "▶", label: "Next" },
-          { id: "FIXTURES", icon: "🏆", label: "Fixtures" },
-          { id: "MANAGER", icon: "👥", label: "Squad" },
-          { id: "STANDINGS", icon: "📋", label: "Standings" },
-          { id: "ANALYTICS", icon: "📊", label: "Stats" },
-        ].map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setCurrentTabProgress(item.id as any)}
-            className={`flex flex-col items-center justify-center py-2.5 px-2 min-w-[52px] transition-all ${
-              currentTabProgress === item.id
-                ? "text-sky-400"
-                : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            <span className="text-lg leading-none">{item.icon}</span>
-            <span className="text-[9px] font-bold uppercase tracking-wider mt-1">{item.label}</span>
-          </button>
-        ))}
-      </nav>
+      <MobileNav
+        currentTab={currentTabProgress as any}
+        onTabChange={(tab) => setCurrentTabProgress(tab as any)}
+      />
 
     </div>
   );

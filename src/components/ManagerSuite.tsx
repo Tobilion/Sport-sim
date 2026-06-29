@@ -791,6 +791,9 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
 
   // Filter transfers list
   const filteredTransfers = scoutedTransferList.filter((item) => {
+    // Exclude players already in the user's squad (prevents duplicates from bid + direct buy)
+    if (userClub.squad.some((s) => s.id === item.id)) return false;
+
     const matchesQuery = item.name
       .toLowerCase()
       .includes(searchQuery.toLowerCase());
@@ -1148,27 +1151,6 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
       {/* TRANSFER MARKET VIEW */}
       {activeSubTab === "TRANSFERS" && (
         <div className="space-y-6 animate-fadeIn">
-          {/* ── Transfer Market Window Feature ──────────────────────────────── */}
-          {transferMarketState && onUpdateTransferMarketState && (
-            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5">
-              <h3 className="text-sm font-bold uppercase tracking-widest text-white flex items-center gap-2 mb-4">
-                <ShoppingCart className="w-5 h-5 text-emerald-400" />
-                Transfer Window
-              </h3>
-              <TransferMarketWindow
-                marketPool={scoutedTransferList}
-                userClub={userClub}
-                allClubs={allClubs}
-                userBalance={userBalance}
-                currentWeek={currentWeek}
-                marketState={transferMarketState}
-                onUpdateMarketState={onUpdateTransferMarketState}
-                onBuyPlayer={onBuyPlayer}
-                onSellPlayer={onSellPlayer}
-                onAddNotification={(title, body) => onAddNotification?.(title, body)}
-              />
-            </div>
-          )}
           <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 space-y-4">
             <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-4 border-b border-white/5 pb-4">
               <div>
@@ -1615,13 +1597,13 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">
                     Direct your backroom specialist staff to focus on specific player progression.
-                    You can assign dedicated coaches to a <span className="text-sky-400 font-bold">maximum of 6 players</span>.
+                    Assign dedicated coaches to any players you choose — no limit.
                   </p>
                 </div>
                 <div className="bg-slate-950/80 border border-white/5 rounded-lg px-3 py-1.5 text-right shrink-0">
-                  <div className="text-[9px] uppercase text-slate-500 font-mono">Specialist Focus Slots</div>
+                  <div className="text-[9px] uppercase text-slate-500 font-mono">Coaches Assigned</div>
                   <div className="text-xs font-mono font-bold text-sky-400">
-                    {userClub.squad.filter((p) => p.focusedCoachId).length} / 6 Assigned
+                    {userClub.squad.filter((p) => p.focusedCoachId).length} Active
                   </div>
                 </div>
               </div>
@@ -1651,8 +1633,6 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                   if (pl.focusedCoachId && pl.id !== p.id) coachAssignments[pl.focusedCoachId] = pl.name;
                 });
                 const assignedCoach = allCoachesAvailable.find((c) => c.id === p.focusedCoachId);
-                const focusedCount = allPlayersCombined.filter((pl) => pl.focusedCoachId).length;
-                const canAssignMore = focusedCount < 6;
 
                 return (
                   <div
@@ -1716,11 +1696,6 @@ export const ManagerSuite: React.FC<ManagerSuiteProps> = ({
                             );
                           })}
                         </select>
-                        {!p.focusedCoachId && !canAssignMore && (
-                          <span className="text-[8px] text-rose-400 uppercase tracking-widest font-mono mt-1">
-                            ⚠️ Coach Focus limit reached (Max 6)
-                          </span>
-                        )}
                         {assignedCoach && (
                           <span className="text-[9px] text-emerald-450 font-mono uppercase bg-emerald-950/50 border border-emerald-500/20 px-2 py-0.5 rounded mt-1 flex items-center gap-1">
                             🌱 {assignedCoach.specialty} Specialty Coaching enabled! (+{(assignedCoach.rating / 10).toFixed(1)}x training velocity)

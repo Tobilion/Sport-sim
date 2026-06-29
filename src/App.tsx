@@ -300,6 +300,7 @@ export default function App() {
   const [fixturesActiveSubTab, setFixturesActiveSubTab] = useState<
     "LEAGUE" | "TOURNAMENT"
   >("LEAGUE");
+  const [financesSubTab, setFinancesSubTab] = useState<'overview' | 'transfers'>('overview');
 
   // Dossier details modal anchors
   const [activePlayerDossierId, setActivePlayerDossierId] = useState<
@@ -1227,17 +1228,6 @@ export default function App() {
   const handleAssignCoachToPlayer = (playerId: string, coachId: string | null) => {
     const updated = allClubs.map((club) => {
       if (club.id === userClubId) {
-        let focusedCount = 0;
-        club.squad.forEach((p) => {
-          if (p.focusedCoachId) focusedCount++;
-        });
-
-        const playerToUpdate = club.squad.find((p) => p.id === playerId);
-        const wasFocusedBefore = playerToUpdate && playerToUpdate.focusedCoachId;
-
-        if (coachId && !wasFocusedBefore && focusedCount >= 6) {
-          return club; // Can't focus more than 6
-        }
 
         return {
           ...club,
@@ -3010,12 +3000,43 @@ export default function App() {
                 <h2 className="text-xl font-black text-white uppercase tracking-tight">Financial Centre</h2>
                 <p className="text-gray-400 text-xs mt-1">Revenue, expenses, and transfer balance</p>
               </div>
-              <FinancialDashboard
-                ledger={financialLedger}
-                userClub={currentActiveUserClub}
-                userBalance={userBalance}
-                currentWeek={currentWeek}
-              />
+              {/* Sub-tab switcher */}
+              <div className="flex gap-1 bg-gray-900/50 rounded-xl p-1 mb-4">
+                <button
+                  onClick={() => setFinancesSubTab('overview')}
+                  className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${financesSubTab === 'overview' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                >
+                  Overview
+                </button>
+                <button
+                  onClick={() => setFinancesSubTab('transfers')}
+                  className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${financesSubTab === 'transfers' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                >
+                  Transfer Window
+                </button>
+              </div>
+              {financesSubTab === 'overview' && (
+                <FinancialDashboard
+                  ledger={financialLedger}
+                  userClub={currentActiveUserClub}
+                  userBalance={userBalance}
+                  currentWeek={currentWeek}
+                />
+              )}
+              {financesSubTab === 'transfers' && (
+                <TransferMarketWindow
+                  marketPool={getTransferMarketPool().filter((p) => !currentActiveUserClub.squad.some((s) => s.id === p.id))}
+                  userClub={currentActiveUserClub}
+                  allClubs={allClubs}
+                  userBalance={userBalance}
+                  currentWeek={currentWeek}
+                  marketState={transferMarketState}
+                  onUpdateMarketState={setTransferMarketState}
+                  onBuyPlayer={handleBuyPlayer}
+                  onSellPlayer={handleSellPlayer}
+                  onAddNotification={(title, body) => addNotification({ type: 'transfer', title, body })}
+                />
+              )}
             </div>
           )}
         </main>
